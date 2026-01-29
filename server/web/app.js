@@ -65,6 +65,7 @@ function renderServerTabs() {
                     <span id="status-${server.name}" class="badge ${server.connected ? 'bg-success' : 'bg-danger'} me-2">
                         ${server.connected ? 'Connected' : 'Disconnected'}
                     </span>
+                    <button class="btn btn-outline-info btn-sm me-1" onclick="copySelection('${server.name}')">Copy Selection</button>
                     <button class="btn btn-outline-secondary btn-sm" onclick="clearServerLogs('${server.name}')">Clear Logs</button>
                 </div>
             </div>
@@ -126,6 +127,8 @@ function createTerminal() {
             foreground: '#00ff00',
             cursor: '#00ff00',
             cursorAccent: '#0a0a0a',
+            selectionBackground: '#44aa44',
+            selectionForeground: '#000000',
             black: '#000000',
             red: '#ff0000',
             green: '#00ff00',
@@ -144,11 +147,22 @@ function createTerminal() {
             brightWhite: '#ffffff'
         },
         scrollback: 10000,
-        convertEol: true
+        convertEol: true,
+        allowProposedApi: true
     });
 
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
+
+    // Enable right-click to copy selection
+    term.attachCustomKeyEventHandler((event) => {
+        // Ctrl+C or Cmd+C when there's a selection = copy
+        if ((event.ctrlKey || event.metaKey) && event.key === 'c' && term.hasSelection()) {
+            navigator.clipboard.writeText(term.getSelection());
+            return false; // Prevent default
+        }
+        return true;
+    });
 
     return { term, fit };
 }
@@ -365,6 +379,34 @@ async function clearAllLogs() {
         });
     } catch (error) {
         console.error('Failed to clear all logs:', error);
+    }
+}
+
+function copySelection(serverName) {
+    const session = serverSessions[serverName];
+    if (!session) return;
+
+    // Check which terminal is active (live or history)
+    const livePanel = document.getElementById(`live-${serverName}`);
+    const term = (livePanel && livePanel.style.display !== 'none')
+        ? session.terminal
+        : session.historyTerminal;
+
+    if (!term) return;
+
+    const selection = term.getSelection();
+    if (selection) {
+        navigator.clipboard.writeText(selection).then(() => {
+            // Brief visual feedback
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = originalText, 1000);
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+        });
+    } else {
+        alert('No text selected. Click and drag to select text in the terminal.');
     }
 }
 
