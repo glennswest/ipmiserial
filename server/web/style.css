@@ -1,0 +1,105 @@
+body {
+    background-color: #1a1a2e;
+    color: #eee;
+}
+
+.list-group-item {
+    background-color: #16213e;
+    border-color: #0f3460;
+    color: #eee;
+    cursor: pointer;
+}
+
+.list-group-item:hover {
+    background-color: #0f3460;
+}
+
+.list-group-item.active {
+    background-color: #e94560;
+    border-color: #e94560;
+}
+
+.nav-tabs {
+    border-bottom-color: #0f3460;
+}
+
+.nav-tabs .nav-link {
+    color: #aaa;
+    border-color: transparent;
+}
+
+.nav-tabs .nav-link:hover {
+    border-color: #0f3460;
+    color: #eee;
+}
+
+.nav-tabs .nav-link.active {
+    background-color: #16213e;
+    border-color: #0f3460;
+    border-bottom-color: #16213e;
+    color: #eee;
+}
+
+#terminal-container {
+    height: calc(100vh - 200px);
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    padding: 5px;
+    background-color: #0a0a0a;
+}
+
+#history-terminal-container {
+    height: calc(100vh - 250px);
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    padding: 5px;
+    background-color: #0a0a0a;
+}
+
+.badge.bg-success {
+    background-color: #28a745 !important;
+}
+
+.badge.bg-danger {
+    background-color: #dc3545 !important;
+}
+
+.badge.bg-warning {
+    background-color: #ffc107 !important;
+    color: #000;
+}
+
+.server-status {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 8px;
+}
+
+.server-status.online {
+    background-color: #28a745;
+}
+
+.server-status.offline {
+    background-color: #dc3545;
+}
+
+.server-status.connecting {
+    background-color: #ffc107;
+}
+
+#server-list {
+    max-height: calc(100vh - 150px);
+    overflow-y: auto;
+}
+
+#log-list {
+    max-height: calc(100vh - 250px);
+    overflow-y: auto;
+}
+
+#log-list .list-group-item {
+    font-size: 12px;
+    padding: 8px 12px;
+}

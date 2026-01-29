@@ -1,0 +1,28 @@
+ipmi:
+  username: ADMIN
+  password: ADMIN
+
+servers:
+  - name: server1
+    host: server1.g11.lo
+  - name: server2
+    host: server2.g11.lo
+
+discovery:
+  enabled: false
+  subnet: "192.168.11.0/24"
+  interval: 5m
+
+reboot_detection:
+  sol_patterns:
+    - "POST"
+    - "BIOS"
+    - "Booting"
+  chassis_poll_interval: 30s
+
+logs:
+  path: /data/logs
+  retention_days: 30
+
+server:
+  port: 8080
