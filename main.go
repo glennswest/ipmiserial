@@ -53,7 +53,7 @@ func main() {
 
 	rebootDetector := sol.NewRebootDetector(cfg.RebootDetection.SOLPatterns)
 
-	solManager := sol.NewManager(cfg.IPMI.Username, cfg.IPMI.Password, logWriter, rebootDetector)
+	solManager := sol.NewManager(cfg.IPMI.Username, cfg.IPMI.Password, logWriter, rebootDetector, cfg.Logs.Path)
 
 	scanner := discovery.NewScanner()
 

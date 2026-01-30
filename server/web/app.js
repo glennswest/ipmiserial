@@ -1,7 +1,7 @@
 let servers = [];
 let currentServer = null;
 
-// Per-server sessions: { name: { terminal, fitAddon, eventSource, historyTerminal, historyFitAddon } }
+// Per-server sessions: { name: { terminal, fitAddon, eventSource, currentLogFile, lastLogCount } }
 const serverSessions = {};
 
 async function fetchServers() {
@@ -49,7 +49,7 @@ function renderServerTabs() {
         </li>
     `).join('');
 
-    // Build content panels
+    // Build content panels with htmx attributes
     contentContainer.innerHTML = servers.map((server, index) => `
         <div class="tab-pane ${index === 0 ? 'show active' : ''}" id="panel-${server.name}">
             <div class="d-flex justify-content-between align-items-center my-2">
@@ -59,6 +59,9 @@ function renderServerTabs() {
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="#" onclick="showSubTab('${server.name}', 'history'); return false;">History</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showSubTab('${server.name}', 'analytics'); return false;">Analytics</a>
                     </li>
                 </ul>
                 <div>
@@ -75,11 +78,24 @@ function renderServerTabs() {
             <div id="history-${server.name}" class="subtab-content" style="display: none;">
                 <div class="row">
                     <div class="col-md-2">
-                        <div class="list-group log-list" id="loglist-${server.name}"></div>
+                        <div class="list-group log-list" id="loglist-${server.name}"
+                             hx-get="/htmx/servers/${server.name}/logs"
+                             hx-trigger="loadLogs, refreshLogs">
+                            <div class="list-group-item text-muted small">Select History tab to load...</div>
+                        </div>
                     </div>
                     <div class="col-md-10">
-                        <div id="history-terminal-${server.name}" class="terminal-container"></div>
+                        <div class="log-viewer" id="log-content-${server.name}">
+                            <div class="text-muted p-3">Select a log file to view...</div>
+                        </div>
                     </div>
+                </div>
+            </div>
+            <div id="analytics-${server.name}" class="subtab-content" style="display: none;">
+                <div class="analytics-panel" id="analytics-content-${server.name}"
+                     hx-get="/htmx/servers/${server.name}/analytics"
+                     hx-trigger="loadAnalytics">
+                    <div class="text-muted">Select Analytics tab to load...</div>
                 </div>
             </div>
         </div>
@@ -94,6 +110,9 @@ function renderServerTabs() {
     if (servers.length > 0) {
         currentServer = servers[0].name;
     }
+
+    // Process htmx on new content
+    htmx.process(contentContainer);
 }
 
 function updateServerStatus() {
@@ -179,15 +198,20 @@ function initServerSession(name) {
         terminal: term,
         fitAddon: fit,
         eventSource: null,
-        historyTerminal: null,
-        historyFitAddon: null
+        currentLogFile: null,
+        lastLogCount: 0
     };
 
     // Fit after a short delay
-    setTimeout(() => fit.fit(), 100);
+    setTimeout(() => {
+        fit.fit();
+    }, 100);
 
     // Start streaming
     startServerStream(name);
+
+    // Start checking for new log files
+    checkForNewLogs(name);
 }
 
 function startServerStream(name) {
@@ -219,6 +243,34 @@ function startServerStream(name) {
     session.eventSource = eventSource;
 }
 
+// Check for new log files and auto-switch when a new boot happens
+async function checkForNewLogs(serverName) {
+    const session = serverSessions[serverName];
+    if (!session) return;
+
+    try {
+        const response = await fetch(`/api/servers/${encodeURIComponent(serverName)}/logs`);
+        const logs = await response.json();
+
+        if (logs && logs.length > 0) {
+            // If log count increased, there's a new log file (new boot)
+            if (session.lastLogCount > 0 && logs.length > session.lastLogCount) {
+                console.log(`New log file detected for ${serverName}, refreshing list`);
+                // Trigger htmx refresh of log list (the new list will auto-load the first log)
+                htmx.trigger(`#loglist-${serverName}`, 'refreshLogs');
+                // Also refresh analytics to show new boot
+                htmx.trigger(`#analytics-content-${serverName}`, 'loadAnalytics');
+            }
+            session.lastLogCount = logs.length;
+        }
+    } catch (error) {
+        console.error('Failed to check logs:', error);
+    }
+
+    // Check again in 5 seconds
+    setTimeout(() => checkForNewLogs(serverName), 5000);
+}
+
 function selectServer(name) {
     currentServer = name;
 
@@ -247,104 +299,42 @@ function showSubTab(serverName, tab) {
 
     const livePanel = document.getElementById(`live-${serverName}`);
     const historyPanel = document.getElementById(`history-${serverName}`);
+    const analyticsPanel = document.getElementById(`analytics-${serverName}`);
+
+    livePanel.style.display = 'none';
+    historyPanel.style.display = 'none';
+    analyticsPanel.style.display = 'none';
+
+    const session = serverSessions[serverName];
 
     if (tab === 'live') {
         subtabs[0].classList.add('active');
         livePanel.style.display = 'block';
-        historyPanel.style.display = 'none';
 
-        const session = serverSessions[serverName];
         if (session && session.fitAddon) {
-            setTimeout(() => session.fitAddon.fit(), 50);
+            setTimeout(() => session.fitAddon.fit(), 10);
         }
-    } else {
+    } else if (tab === 'history') {
         subtabs[1].classList.add('active');
-        livePanel.style.display = 'none';
         historyPanel.style.display = 'block';
-
-        loadLogList(serverName);
+        // Trigger htmx to load the log list
+        htmx.trigger(`#loglist-${serverName}`, 'loadLogs');
+    } else if (tab === 'analytics') {
+        subtabs[2].classList.add('active');
+        analyticsPanel.style.display = 'block';
+        // Trigger htmx to load analytics
+        htmx.trigger(`#analytics-content-${serverName}`, 'loadAnalytics');
     }
 }
 
-async function loadLogList(serverName) {
-    try {
-        const response = await fetch(`/api/servers/${encodeURIComponent(serverName)}/logs`);
-        const logs = await response.json();
-
-        const list = document.getElementById(`loglist-${serverName}`);
-
-        if (!logs || logs.length === 0) {
-            list.innerHTML = '<div class="list-group-item text-muted small">No logs</div>';
-            return;
-        }
-
-        const session = serverSessions[serverName];
-        const currentLog = session ? session.currentLogFile : null;
-
-        list.innerHTML = logs.map(log => `
-            <a href="#" class="list-group-item list-group-item-action small ${currentLog === log ? 'active' : ''}"
-               id="logitem-${serverName}-${log.replace(/[^a-zA-Z0-9]/g, '_')}"
-               onclick="loadLog('${serverName}', '${log}'); return false;">
-                ${log}
-            </a>
-        `).join('');
-
-        // Initialize history terminal early so it's ready
-        if (session && !session.historyTerminal) {
-            const container = document.getElementById(`history-terminal-${serverName}`);
-            const { term, fit } = createTerminal();
-            term.open(container);
-            session.historyTerminal = term;
-            session.historyFitAddon = fit;
-            setTimeout(() => fit.fit(), 50);
-        }
-    } catch (error) {
-        console.error('Failed to load log list:', error);
-    }
-}
-
-async function loadLog(serverName, filename) {
-    const session = serverSessions[serverName];
-    if (!session) return;
-
-    // Update active state in list immediately
-    const list = document.getElementById(`loglist-${serverName}`);
-    list.querySelectorAll('.list-group-item').forEach(item => {
-        item.classList.remove('active');
-    });
-    const itemId = `logitem-${serverName}-${filename.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    const activeItem = document.getElementById(itemId);
-    if (activeItem) {
-        activeItem.classList.add('active');
-    }
-
-    // Store current log file
-    session.currentLogFile = filename;
-
-    // Initialize history terminal if needed
-    if (!session.historyTerminal) {
-        const container = document.getElementById(`history-terminal-${serverName}`);
-        const { term, fit } = createTerminal();
-        term.open(container);
-        session.historyTerminal = term;
-        session.historyFitAddon = fit;
-        setTimeout(() => fit.fit(), 50);
-    }
-
-    // Clear and show loading indicator
-    session.historyTerminal.clear();
-    session.historyTerminal.write('\x1b[33mLoading...\x1b[0m');
-
-    try {
-        const response = await fetch(`/api/servers/${encodeURIComponent(serverName)}/logs/${encodeURIComponent(filename)}`);
-        const content = await response.text();
-
-        session.historyTerminal.clear();
-        session.historyTerminal.write(content);
-    } catch (error) {
-        console.error('Failed to load log:', error);
-        session.historyTerminal.clear();
-        session.historyTerminal.write('\x1b[31mError loading log\x1b[0m');
+// Called by htmx before loading a log file
+function setActiveLog(element) {
+    const list = element.closest('.log-list');
+    if (list) {
+        list.querySelectorAll('.list-group-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        element.classList.add('active');
     }
 }
 
@@ -353,12 +343,11 @@ async function clearServerLogs(serverName) {
 
     try {
         await fetch(`/api/servers/${encodeURIComponent(serverName)}/logs/clear`, { method: 'POST' });
-
-        // Refresh log list if viewing history
-        const historyPanel = document.getElementById(`history-${serverName}`);
-        if (historyPanel && historyPanel.style.display !== 'none') {
-            loadLogList(serverName);
-        }
+        // Trigger htmx refresh
+        htmx.trigger(`#loglist-${serverName}`, 'refreshLogs');
+        // Clear log content
+        document.getElementById(`log-content-${serverName}`).innerHTML =
+            '<div class="text-muted p-3">Select a log file to view...</div>';
     } catch (error) {
         console.error('Failed to clear logs:', error);
     }
@@ -369,13 +358,11 @@ async function clearAllLogs() {
 
     try {
         await fetch('/api/logs/clear', { method: 'POST' });
-
-        // Refresh any visible log lists
+        // Trigger refresh on all log lists
         servers.forEach(server => {
-            const historyPanel = document.getElementById(`history-${server.name}`);
-            if (historyPanel && historyPanel.style.display !== 'none') {
-                loadLogList(server.name);
-            }
+            htmx.trigger(`#loglist-${server.name}`, 'refreshLogs');
+            document.getElementById(`log-content-${server.name}`).innerHTML =
+                '<div class="text-muted p-3">Select a log file to view...</div>';
         });
     } catch (error) {
         console.error('Failed to clear all logs:', error);
@@ -386,35 +373,47 @@ function copySelection(serverName) {
     const session = serverSessions[serverName];
     if (!session) return;
 
-    // Check which terminal is active (live or history)
+    // Check which panel is active
     const livePanel = document.getElementById(`live-${serverName}`);
-    const term = (livePanel && livePanel.style.display !== 'none')
-        ? session.terminal
-        : session.historyTerminal;
+    const historyPanel = document.getElementById(`history-${serverName}`);
 
-    if (!term) return;
-
-    const selection = term.getSelection();
-    if (selection) {
-        navigator.clipboard.writeText(selection).then(() => {
-            // Brief visual feedback
-            const btn = event.target;
-            const originalText = btn.textContent;
-            btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = originalText, 1000);
-        }).catch(err => {
-            console.error('Failed to copy:', err);
-        });
-    } else {
-        alert('No text selected. Click and drag to select text in the terminal.');
+    if (livePanel && livePanel.style.display !== 'none') {
+        // Copy from terminal
+        const selection = session.terminal.getSelection();
+        if (selection) {
+            navigator.clipboard.writeText(selection).then(() => {
+                showCopyFeedback(event.target);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        } else {
+            alert('No text selected. Click and drag to select text in the terminal.');
+        }
+    } else if (historyPanel && historyPanel.style.display !== 'none') {
+        // Copy from log viewer (regular text selection)
+        const selection = window.getSelection().toString();
+        if (selection) {
+            navigator.clipboard.writeText(selection).then(() => {
+                showCopyFeedback(event.target);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        } else {
+            alert('No text selected. Click and drag to select text.');
+        }
     }
+}
+
+function showCopyFeedback(btn) {
+    const originalText = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = originalText, 1000);
 }
 
 // Handle window resize
 window.addEventListener('resize', () => {
     Object.values(serverSessions).forEach(session => {
         if (session.fitAddon) session.fitAddon.fit();
-        if (session.historyFitAddon) session.historyFitAddon.fit();
     });
 });
 

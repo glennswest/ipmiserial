@@ -29,6 +29,7 @@ type Manager struct {
 	mu             sync.RWMutex
 	logWriter      LogWriter
 	rebootDetector *RebootDetector
+	analytics      *Analytics
 }
 
 type LogWriter interface {
@@ -36,14 +37,23 @@ type LogWriter interface {
 	Rotate(serverName string) error
 }
 
-func NewManager(username, password string, logWriter LogWriter, rebootDetector *RebootDetector) *Manager {
+func NewManager(username, password string, logWriter LogWriter, rebootDetector *RebootDetector, dataPath string) *Manager {
 	return &Manager{
 		username:       username,
 		password:       password,
 		sessions:       make(map[string]*Session),
 		logWriter:      logWriter,
 		rebootDetector: rebootDetector,
+		analytics:      NewAnalytics(dataPath),
 	}
+}
+
+func (m *Manager) GetAnalytics(serverName string) *ServerAnalytics {
+	return m.analytics.GetServerAnalytics(serverName)
+}
+
+func (m *Manager) GetAllAnalytics() map[string]*ServerAnalytics {
+	return m.analytics.GetAllAnalytics()
 }
 
 func (m *Manager) StartSession(serverName, ip string) {
@@ -211,6 +221,11 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 				// Write to log file
 				if m.logWriter != nil {
 					m.logWriter.Write(session.ServerName, data)
+				}
+
+				// Process for analytics
+				if m.analytics != nil {
+					m.analytics.ProcessText(session.ServerName, string(data))
 				}
 
 				// Check for reboot

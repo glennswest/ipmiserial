@@ -1,67 +1,97 @@
+/* Base styles */
 body {
-    background-color: #1a1a2e;
-    color: #eee;
+    background-color: #1e1e2e;
+    color: #cdd6f4;
 }
 
-.list-group-item {
-    background-color: #16213e;
-    border-color: #0f3460;
-    color: #eee;
-    cursor: pointer;
+/* Navbar */
+.navbar-dark {
+    background-color: #181825 !important;
 }
 
-.list-group-item:hover {
-    background-color: #0f3460;
+.navbar-brand {
+    color: #89b4fa !important;
 }
 
-.list-group-item.active {
-    background-color: #e94560;
-    border-color: #e94560;
+.navbar-text {
+    color: #a6adc8 !important;
 }
 
 /* Server tabs at top */
 #server-tabs {
-    border-bottom-color: #0f3460;
+    border-bottom: 1px solid #45475a;
+    background-color: #181825;
+    padding: 5px 10px 0 10px;
 }
 
 #server-tabs .nav-link {
-    color: #aaa;
-    border-color: transparent;
+    color: #a6adc8;
+    border: 1px solid transparent;
+    border-radius: 6px 6px 0 0;
+    margin-right: 2px;
+    padding: 8px 16px;
 }
 
 #server-tabs .nav-link:hover {
-    border-color: #0f3460;
-    color: #eee;
+    color: #cdd6f4;
+    border-color: #45475a #45475a transparent;
+    background-color: #313244;
 }
 
 #server-tabs .nav-link.active {
-    background-color: #16213e;
-    border-color: #0f3460;
-    border-bottom-color: #16213e;
-    color: #eee;
+    background-color: #1e1e2e;
+    border-color: #45475a #45475a #1e1e2e;
+    color: #89b4fa;
 }
 
-/* Sub-tabs (Live/History) */
+/* Sub-tabs (Live/History/Analytics) */
 .nav-pills .nav-link {
-    color: #aaa;
+    color: #a6adc8;
+    padding: 6px 14px;
+    margin-right: 5px;
+    border-radius: 4px;
 }
 
 .nav-pills .nav-link:hover {
-    color: #eee;
+    color: #cdd6f4;
+    background-color: #313244;
 }
 
 .nav-pills .nav-link.active {
-    background-color: #e94560;
-    color: #fff;
+    background-color: #89b4fa;
+    color: #1e1e2e;
+}
+
+/* List groups (server list, log list) */
+.list-group-item {
+    background-color: #181825;
+    border-color: #45475a;
+    color: #cdd6f4;
+    cursor: pointer;
+}
+
+.list-group-item:hover {
+    background-color: #313244;
+    color: #cdd6f4;
+}
+
+.list-group-item.active {
+    background-color: #89b4fa;
+    border-color: #89b4fa;
+    color: #1e1e2e;
+}
+
+.list-group-item.text-muted {
+    color: #6c7086 !important;
 }
 
 /* Terminal containers */
 .terminal-container {
-    height: calc(100vh - 150px);
-    border: 1px solid #0f3460;
-    border-radius: 4px;
+    height: calc(100vh - 160px);
+    border: 1px solid #45475a;
+    border-radius: 6px;
     padding: 5px;
-    background-color: #0a0a0a;
+    background-color: #11111b;
 }
 
 /* History view - shorter terminal to accommodate log list */
@@ -69,19 +99,50 @@ body {
     height: calc(100vh - 180px);
 }
 
+/* Log viewer for history (replaces xterm) */
+.log-viewer {
+    height: calc(100vh - 180px);
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    background-color: #11111b;
+    overflow-y: auto;
+}
+
+.log-content {
+    margin: 0;
+    padding: 10px;
+    font-family: Menlo, Monaco, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #00ff00;
+    background: transparent;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    user-select: text;
+}
+
+/* Badges */
 .badge.bg-success {
-    background-color: #28a745 !important;
+    background-color: #a6e3a1 !important;
+    color: #1e1e2e !important;
 }
 
 .badge.bg-danger {
-    background-color: #dc3545 !important;
+    background-color: #f38ba8 !important;
+    color: #1e1e2e !important;
 }
 
 .badge.bg-warning {
-    background-color: #ffc107 !important;
-    color: #000;
+    background-color: #f9e2af !important;
+    color: #1e1e2e !important;
 }
 
+.badge.bg-info {
+    background-color: #89dceb !important;
+    color: #1e1e2e !important;
+}
+
+/* Server status indicators */
 .server-status {
     width: 10px;
     height: 10px;
@@ -91,15 +152,15 @@ body {
 }
 
 .server-status.online {
-    background-color: #28a745;
+    background-color: #a6e3a1;
 }
 
 .server-status.offline {
-    background-color: #dc3545;
+    background-color: #f38ba8;
 }
 
 .server-status.connecting {
-    background-color: #ffc107;
+    background-color: #f9e2af;
 }
 
 /* Log list in history view */
@@ -120,4 +181,144 @@ body {
 
 .tab-pane.show.active {
     display: block;
+}
+
+/* Buttons */
+.btn-outline-secondary {
+    color: #a6adc8;
+    border-color: #45475a;
+}
+
+.btn-outline-secondary:hover {
+    background-color: #313244;
+    border-color: #45475a;
+    color: #cdd6f4;
+}
+
+.btn-outline-info {
+    color: #89dceb;
+    border-color: #89dceb;
+}
+
+.btn-outline-info:hover {
+    background-color: #89dceb;
+    color: #1e1e2e;
+}
+
+.btn-outline-danger {
+    color: #f38ba8;
+    border-color: #f38ba8;
+}
+
+.btn-outline-danger:hover {
+    background-color: #f38ba8;
+    color: #1e1e2e;
+}
+
+/* Analytics panel */
+.analytics-panel {
+    padding: 15px;
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+}
+
+.analytics-panel .card {
+    background-color: #181825;
+    border-color: #45475a;
+}
+
+.analytics-panel .card-header {
+    background-color: #313244;
+    border-bottom-color: #45475a;
+    color: #cdd6f4;
+    font-weight: bold;
+    padding: 8px 12px;
+}
+
+.analytics-panel .card-body {
+    background-color: #181825;
+    color: #cdd6f4;
+    padding: 12px;
+}
+
+.analytics-panel .card-body p {
+    color: #cdd6f4;
+}
+
+.analytics-panel .card-body strong {
+    color: #89b4fa;
+}
+
+/* Analytics tables - simplified for server-rendered HTML */
+.analytics-panel .table {
+    margin-bottom: 0;
+    color: #cdd6f4;
+    background-color: #181825;
+}
+
+.analytics-panel .table th {
+    background-color: #313244;
+    color: #89b4fa;
+    border-color: #45475a;
+    padding: 8px 12px;
+}
+
+.analytics-panel .table td {
+    border-color: #45475a;
+    padding: 8px 12px;
+}
+
+.analytics-panel .table-striped tbody tr:nth-of-type(odd) {
+    background-color: #1e1e2e;
+}
+
+.analytics-panel .table-striped tbody tr:nth-of-type(even) {
+    background-color: #181825;
+}
+
+/* Text colors for analytics */
+.text-success {
+    color: #a6e3a1 !important;
+}
+
+.text-warning {
+    color: #f9e2af !important;
+}
+
+.text-danger {
+    color: #f38ba8 !important;
+}
+
+.text-info {
+    color: #89dceb !important;
+}
+
+.text-muted {
+    color: #6c7086 !important;
+}
+
+
+/* Card styles */
+.card.bg-dark {
+    background-color: #181825 !important;
+    border-color: #45475a;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #181825;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #45475a;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #585b70;
 }

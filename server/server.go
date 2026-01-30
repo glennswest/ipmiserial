@@ -50,6 +50,14 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/servers/{name}/status", s.handleStatus).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/clear", s.handleClearLogs).Methods("POST")
 	api.HandleFunc("/logs/clear", s.handleClearAllLogs).Methods("POST")
+	api.HandleFunc("/servers/{name}/analytics", s.handleAnalytics).Methods("GET")
+	api.HandleFunc("/analytics", s.handleAllAnalytics).Methods("GET")
+
+	// HTMX HTML fragment routes
+	htmx := s.router.PathPrefix("/htmx").Subrouter()
+	htmx.HandleFunc("/servers/{name}/analytics", s.handleAnalyticsHTML).Methods("GET")
+	htmx.HandleFunc("/servers/{name}/logs", s.handleLogListHTML).Methods("GET")
+	htmx.HandleFunc("/servers/{name}/logs/{filename}", s.handleLogContentHTML).Methods("GET")
 
 	// Serve embedded web files
 	webContent, _ := fs.Sub(webFS, "web")
