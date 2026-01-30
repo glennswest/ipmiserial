@@ -22,6 +22,7 @@ var webFS embed.FS
 
 type Server struct {
 	port       int
+	version    string
 	scanner    *discovery.Scanner
 	solManager *sol.Manager
 	logWriter  *logs.Writer
@@ -30,9 +31,10 @@ type Server struct {
 	macLookup  map[string]string // MAC -> server name
 }
 
-func New(port int, scanner *discovery.Scanner, solManager *sol.Manager, logWriter *logs.Writer, servers []config.ServerEntry) *Server {
+func New(port int, scanner *discovery.Scanner, solManager *sol.Manager, logWriter *logs.Writer, servers []config.ServerEntry, version string) *Server {
 	s := &Server{
 		port:       port,
+		version:    version,
 		scanner:    scanner,
 		solManager: solManager,
 		logWriter:  logWriter,
@@ -69,10 +71,12 @@ func normalizeMac(mac string) string {
 func (s *Server) setupRoutes() {
 	// API routes
 	api := s.router.PathPrefix("/api").Subrouter()
+	api.HandleFunc("/version", s.handleVersion).Methods("GET")
 	api.HandleFunc("/servers", s.handleListServers).Methods("GET")
 	api.HandleFunc("/servers/{name}/stream", s.handleStream).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs", s.handleListLogs).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/{filename}", s.handleGetLog).Methods("GET")
+	api.HandleFunc("/servers/{name}/logs/{filename}/info", s.handleLogInfo).Methods("GET")
 	api.HandleFunc("/servers/{name}/status", s.handleStatus).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/clear", s.handleClearLogs).Methods("POST")
 	api.HandleFunc("/servers/{name}/logs/rotate", s.handleRotateLogs).Methods("POST")

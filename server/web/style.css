@@ -163,7 +163,7 @@ body {
     background-color: #f9e2af;
 }
 
-/* Log list in history view */
+/* Log list in logs view */
 .log-list {
     max-height: calc(100vh - 180px);
     overflow-y: auto;
@@ -172,6 +172,68 @@ body {
 .log-list .list-group-item {
     font-size: 11px;
     padding: 6px 10px;
+}
+
+/* Log viewer container */
+.log-viewer-container {
+    display: flex;
+    flex-direction: row;
+    height: calc(100vh - 180px);
+    gap: 10px;
+}
+
+.log-slider-vertical {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 5px;
+    background-color: #181825;
+    border-radius: 4px;
+    width: 40px;
+}
+
+.log-slider-vertical .form-range {
+    writing-mode: vertical-lr;
+    height: 100%;
+    width: 20px;
+    -webkit-appearance: slider-vertical;
+}
+
+.log-slider-vertical small {
+    writing-mode: horizontal-tb;
+    margin-top: auto;
+    padding-top: 5px;
+    font-size: 10px;
+}
+
+.log-viewer {
+    flex: 1;
+    overflow-y: auto;
+    background-color: #11111b;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    min-width: 0;
+}
+
+.log-content {
+    margin: 0;
+    padding: 10px;
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #a6e3a1;
+    background-color: transparent;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* Range slider styling */
+.form-range::-webkit-slider-thumb {
+    background: #89b4fa;
+}
+
+.form-range::-webkit-slider-runnable-track {
+    background: #45475a;
 }
 
 /* Tab pane visibility */

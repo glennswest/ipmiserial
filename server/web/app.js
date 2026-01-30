@@ -4,7 +4,7 @@ let currentServer = null;
 // Per-server sessions: { name: { terminal, fitAddon, eventSource, currentLogFile, lastLogCount } }
 const serverSessions = {};
 
-// URL hash support for direct linking: #server1 or #server1/live or #server1/history
+// URL hash support for direct linking: #server1 or #server1/live or #server1/logs
 function parseHash() {
     const hash = window.location.hash.slice(1); // remove #
     if (!hash) return null;
@@ -32,11 +32,11 @@ async function fetchServers() {
         const oldServerNames = servers.map(s => s.name).sort().join(',');
 
         if (serverNames !== oldServerNames) {
-            servers = newServers;
+            servers = newServers.sort((a, b) => a.name.localeCompare(b.name));
             renderServerTabs();
         } else {
             // Just update status
-            servers = newServers;
+            servers = newServers.sort((a, b) => a.name.localeCompare(b.name));
             updateServerStatus();
         }
     } catch (error) {
@@ -76,7 +76,7 @@ function renderServerTabs() {
                         <a class="nav-link active" href="#" onclick="showSubTab('${server.name}', 'live'); return false;">Live</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#" onclick="showSubTab('${server.name}', 'history'); return false;">History</a>
+                        <a class="nav-link" href="#" onclick="showSubTab('${server.name}', 'logs'); return false;">Logs</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="#" onclick="showSubTab('${server.name}', 'analytics'); return false;">Analytics</a>
@@ -93,18 +93,27 @@ function renderServerTabs() {
             <div id="live-${server.name}" class="subtab-content">
                 <div id="terminal-${server.name}" class="terminal-container"></div>
             </div>
-            <div id="history-${server.name}" class="subtab-content" style="display: none;">
+            <div id="logs-${server.name}" class="subtab-content" style="display: none;">
                 <div class="row">
                     <div class="col-md-2">
                         <div class="list-group log-list" id="loglist-${server.name}"
                              hx-get="/htmx/servers/${server.name}/logs"
-                             hx-trigger="loadLogs, refreshLogs">
-                            <div class="list-group-item text-muted small">Select History tab to load...</div>
+                             hx-trigger="load, every 3s, refreshLogs from:body"
+                             hx-vals="js:{current: logState['${server.name}']?.filename || ''}"
+                             hx-swap="innerHTML">
                         </div>
                     </div>
                     <div class="col-md-10">
-                        <div class="log-viewer" id="log-content-${server.name}">
-                            <div class="text-muted p-3">Select a log file to view...</div>
+                        <div class="log-viewer-container">
+                            <div class="log-slider-vertical">
+                                <input type="range" class="form-range" id="log-slider-${server.name}"
+                                       min="0" max="100" value="100" orient="vertical"
+                                       oninput="onLogSliderChange('${server.name}', this.value)">
+                                <small class="text-muted" id="log-position-${server.name}">End</small>
+                            </div>
+                            <div class="log-viewer" id="log-content-${server.name}">
+                                <div class="text-muted p-3">Select a log file to view...</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -283,10 +292,8 @@ async function checkForNewLogs(serverName) {
         if (logs && logs.length > 0) {
             // If log count increased, there's a new log file (new boot)
             if (session.lastLogCount > 0 && logs.length > session.lastLogCount) {
-                console.log(`New log file detected for ${serverName}, refreshing list`);
-                // Trigger htmx refresh of log list (the new list will auto-load the first log)
-                htmx.trigger(`#loglist-${serverName}`, 'refreshLogs');
-                // Also refresh analytics to show new boot
+                console.log(`New log file detected for ${serverName}`);
+                // Refresh analytics to show new boot (htmx handles log list)
                 htmx.trigger(`#analytics-content-${serverName}`, 'loadAnalytics');
             }
             session.lastLogCount = logs.length;
@@ -326,11 +333,11 @@ function showSubTab(serverName, tab) {
     subtabs.forEach(t => t.classList.remove('active'));
 
     const livePanel = document.getElementById(`live-${serverName}`);
-    const historyPanel = document.getElementById(`history-${serverName}`);
+    const logsPanel = document.getElementById(`logs-${serverName}`);
     const analyticsPanel = document.getElementById(`analytics-${serverName}`);
 
     livePanel.style.display = 'none';
-    historyPanel.style.display = 'none';
+    logsPanel.style.display = 'none';
     analyticsPanel.style.display = 'none';
 
     const session = serverSessions[serverName];
@@ -342,11 +349,9 @@ function showSubTab(serverName, tab) {
         if (session && session.fitAddon) {
             setTimeout(() => session.fitAddon.fit(), 10);
         }
-    } else if (tab === 'history') {
+    } else if (tab === 'logs') {
         subtabs[1].classList.add('active');
-        historyPanel.style.display = 'block';
-        // Trigger htmx to load the log list
-        htmx.trigger(`#loglist-${serverName}`, 'loadLogs');
+        logsPanel.style.display = 'block';
     } else if (tab === 'analytics') {
         subtabs[2].classList.add('active');
         analyticsPanel.style.display = 'block';
@@ -366,16 +371,103 @@ function setActiveLog(element) {
     }
 }
 
+// Track current log file per server
+const logState = {};
+
+async function loadLogFile(serverName, filename) {
+    // Set active in list
+    const list = document.getElementById(`loglist-${serverName}`);
+    list.querySelectorAll('.list-group-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.textContent.trim() === filename) {
+            item.classList.add('active');
+        }
+    });
+
+    // Store current file
+    logState[serverName] = { filename: filename, fileSize: 0 };
+
+    // Get file info first
+    try {
+        const infoResp = await fetch(`/api/servers/${encodeURIComponent(serverName)}/logs/${encodeURIComponent(filename)}/info`);
+        const info = await infoResp.json();
+        logState[serverName].fileSize = info.size;
+
+        // Update slider (0 at bottom = end of log)
+        const slider = document.getElementById(`log-slider-${serverName}`);
+        slider.value = 0; // Bottom = end of log
+        updateLogPosition(serverName, 100);
+
+        // Load content at end
+        loadLogContent(serverName, filename, 100);
+    } catch (error) {
+        console.error('Failed to load log info:', error);
+    }
+}
+
+async function loadLogContent(serverName, filename, pos) {
+    const container = document.getElementById(`log-content-${serverName}`);
+
+    try {
+        const resp = await fetch(`/htmx/servers/${encodeURIComponent(serverName)}/logs/${encodeURIComponent(filename)}?pos=${pos}`);
+        const html = await resp.text();
+        container.innerHTML = html;
+
+        // Scroll after DOM update
+        setTimeout(() => {
+            const pre = container.querySelector('pre');
+            if (pre) {
+                if (pos >= 95) {
+                    pre.scrollTop = pre.scrollHeight;
+                } else if (pos <= 5) {
+                    pre.scrollTop = 0;
+                }
+            }
+        }, 10);
+    } catch (error) {
+        console.error('Failed to load log content:', error);
+    }
+}
+
+function onLogSliderChange(serverName, sliderValue) {
+    const state = logState[serverName];
+    if (!state || !state.filename) return;
+
+    // Invert: slider 0 (bottom) = end of log (100), slider 100 (top) = start of log (0)
+    const pos = 100 - sliderValue;
+    updateLogPosition(serverName, pos);
+    loadLogContent(serverName, state.filename, pos);
+}
+
+function updateLogPosition(serverName, pos) {
+    const posLabel = document.getElementById(`log-position-${serverName}`);
+
+    if (pos >= 95) {
+        posLabel.textContent = 'End';
+    } else if (pos <= 5) {
+        posLabel.textContent = 'Start';
+    } else {
+        posLabel.textContent = `${pos}%`;
+    }
+}
+
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 async function clearServerLogs(serverName) {
     if (!confirm(`Clear all logs for ${serverName}?`)) return;
 
     try {
         await fetch(`/api/servers/${encodeURIComponent(serverName)}/logs/clear`, { method: 'POST' });
-        // Trigger htmx refresh
-        htmx.trigger(`#loglist-${serverName}`, 'refreshLogs');
-        // Clear log content
+        // Reset state
+        delete logState[serverName];
         document.getElementById(`log-content-${serverName}`).innerHTML =
             '<div class="text-muted p-3">Select a log file to view...</div>';
+        // Trigger htmx refresh
+        htmx.trigger(document.body, 'refreshLogs');
     } catch (error) {
         console.error('Failed to clear logs:', error);
     }
@@ -386,12 +478,14 @@ async function clearAllLogs() {
 
     try {
         await fetch('/api/logs/clear', { method: 'POST' });
-        // Trigger refresh on all log lists
+        // Reset state for all servers
         servers.forEach(server => {
-            htmx.trigger(`#loglist-${server.name}`, 'refreshLogs');
+            delete logState[server.name];
             document.getElementById(`log-content-${server.name}`).innerHTML =
                 '<div class="text-muted p-3">Select a log file to view...</div>';
         });
+        // Trigger htmx refresh
+        htmx.trigger(document.body, 'refreshLogs');
     } catch (error) {
         console.error('Failed to clear all logs:', error);
     }
@@ -403,7 +497,7 @@ function copySelection(serverName) {
 
     // Check which panel is active
     const livePanel = document.getElementById(`live-${serverName}`);
-    const historyPanel = document.getElementById(`history-${serverName}`);
+    const logsPanel = document.getElementById(`logs-${serverName}`);
 
     if (livePanel && livePanel.style.display !== 'none') {
         // Copy from terminal
@@ -417,7 +511,7 @@ function copySelection(serverName) {
         } else {
             alert('No text selected. Click and drag to select text in the terminal.');
         }
-    } else if (historyPanel && historyPanel.style.display !== 'none') {
+    } else if (logsPanel && logsPanel.style.display !== 'none') {
         // Copy from log viewer (regular text selection)
         const selection = window.getSelection().toString();
         if (selection) {
@@ -468,6 +562,18 @@ showSubTab = function(serverName, tab) {
     updateHash(serverName, tab);
 };
 
+// Fetch and display version
+async function fetchVersion() {
+    try {
+        const response = await fetch('/api/version');
+        const data = await response.json();
+        document.getElementById('version-display').textContent = 'v' + data.version;
+    } catch (error) {
+        console.error('Failed to fetch version:', error);
+    }
+}
+
 // Initial load and periodic refresh
+fetchVersion();
 fetchServers();
 setInterval(fetchServers, 10000);

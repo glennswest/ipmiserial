@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -21,6 +20,13 @@ type ServerInfo struct {
 	Online    bool   `json:"online"`
 	Connected bool   `json:"connected"`
 	LastError string `json:"lastError,omitempty"`
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"version": s.version,
+	})
 }
 
 func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +86,31 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data)
+}
+
+func (s *Server) handleLogInfo(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+	filename := vars["filename"]
+
+	path := s.logWriter.GetLogPath(name, filename)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Log not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"filename": filename,
+		"size":     info.Size(),
+		"modified": info.ModTime(),
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +388,9 @@ func (s *Server) handleLogListHTML(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
 
+	// Get currently selected log from query param (sent by htmx)
+	currentLog := r.URL.Query().Get("current")
+
 	logs, err := s.logWriter.ListLogs(name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -366,20 +400,23 @@ func (s *Server) handleLogListHTML(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if len(logs) == 0 {
-		fmt.Fprint(w, `<div class="list-group-item text-muted small">No logs</div>`)
+		fmt.Fprint(w, `<div class="list-group-item text-muted small">No logs yet</div>`)
 		return
 	}
 
 	for i, log := range logs {
 		activeClass := ""
-		autoLoad := ""
-		if i == 0 {
+		// Keep current selection, or select first if none
+		if log == currentLog || (currentLog == "" && i == 0) {
 			activeClass = " active"
-			// Auto-load the first (most recent) log
-			autoLoad = fmt.Sprintf(` hx-get="/htmx/servers/%s/logs/%s" hx-target="#log-content-%s" hx-trigger="load"`, name, log, name)
 		}
-		fmt.Fprintf(w, `<a href="#" class="list-group-item list-group-item-action small%s" hx-get="/htmx/servers/%s/logs/%s" hx-target="#log-content-%s" hx-swap="innerHTML" hx-on::before-request="setActiveLog(this)"%s>%s</a>`,
-			activeClass, name, log, name, autoLoad, html.EscapeString(log))
+		fmt.Fprintf(w, `<a href="#" class="list-group-item list-group-item-action small%s" onclick="loadLogFile('%s', '%s'); return false;">%s</a>`,
+			activeClass, name, log, html.EscapeString(log))
+	}
+
+	// If no current selection, trigger auto-load of first log via script
+	if currentLog == "" && len(logs) > 0 {
+		fmt.Fprintf(w, `<script>loadLogFile('%s', '%s');</script>`, name, logs[0])
 	}
 }
 
@@ -388,19 +425,15 @@ func (s *Server) handleLogContentHTML(w http.ResponseWriter, r *http.Request) {
 	name := vars["name"]
 	filename := vars["filename"]
 
-	// Get pagination params
-	lines := 1000 // default
-	offset := 0
-	if l := r.URL.Query().Get("lines"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			lines = parsed
+	// Get position param (0-100 percentage, default 100 = end)
+	pos := 100
+	if p := r.URL.Query().Get("pos"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed >= 0 && parsed <= 100 {
+			pos = parsed
 		}
 	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
+
+	chunkSize := int64(64 * 1024) // 64KB chunks
 
 	path := s.logWriter.GetLogPath(name, filename)
 
@@ -416,57 +449,70 @@ func (s *Server) handleLogContentHTML(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Read all lines into memory, stripping ANSI escape codes
-	var allLines []string
-	scanner := bufio.NewScanner(file)
-	// Increase buffer size for long lines
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimRight(scanner.Text(), " \t")
-		if line != "" {
-			allLines = append(allLines, line)
-		}
-	}
+	info, _ := file.Stat()
+	fileSize := info.Size()
 
-	totalLines := len(allLines)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if totalLines == 0 {
+	if fileSize == 0 {
 		fmt.Fprint(w, `<div class="text-muted p-3">Empty log file</div>`)
 		return
 	}
 
-	// Calculate start index (show last N lines by default)
-	startIdx := totalLines - lines - offset
-	if startIdx < 0 {
-		startIdx = 0
+	// Calculate byte position based on percentage
+	// pos=100 means end of file, pos=0 means start
+	var startByte int64
+	if pos >= 100 {
+		startByte = fileSize - chunkSize
+	} else {
+		startByte = (fileSize * int64(pos) / 100) - chunkSize/2
 	}
-	endIdx := totalLines - offset
-	if endIdx > totalLines {
-		endIdx = totalLines
-	}
-	if endIdx < 0 {
-		endIdx = 0
-	}
-
-	// Check if there are more lines above
-	hasMore := startIdx > 0
-
-	var result string
-	if hasMore {
-		newOffset := offset + lines
-		result = fmt.Sprintf(`<div class="text-center py-2"><button class="btn btn-sm btn-outline-secondary" hx-get="/htmx/servers/%s/logs/%s?lines=%d&amp;offset=%d" hx-target="#log-content-%s" hx-swap="innerHTML">Load older lines (%d more)</button></div>`,
-			name, filename, lines, newOffset, name, startIdx)
+	if startByte < 0 {
+		startByte = 0
 	}
 
-	result += `<pre class="log-content mb-0">`
-	for i := startIdx; i < endIdx; i++ {
-		result += html.EscapeString(allLines[i]) + "\n"
+	endByte := startByte + chunkSize
+	if endByte > fileSize {
+		endByte = fileSize
 	}
-	result += `</pre>`
 
-	fmt.Fprint(w, result)
+	// Seek and read chunk
+	file.Seek(startByte, 0)
+	buf := make([]byte, endByte-startByte)
+	n, _ := file.Read(buf)
+	buf = buf[:n]
+
+	// Find line boundaries - skip partial first line if not at start
+	content := string(buf)
+	if startByte > 0 {
+		if idx := strings.Index(content, "\n"); idx >= 0 {
+			content = content[idx+1:]
+		}
+	}
+
+	// Skip partial last line if not at end
+	if endByte < fileSize {
+		if idx := strings.LastIndex(content, "\n"); idx >= 0 {
+			content = content[:idx+1]
+		}
+	}
+
+	// Clean up and format
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	result.WriteString(`<pre class="log-content mb-0">`)
+	for _, line := range lines {
+		line = strings.TrimRight(line, " \t\r")
+		if line != "" {
+			result.WriteString(html.EscapeString(line))
+			result.WriteString("\n")
+		}
+	}
+	result.WriteString(`</pre>`)
+
+	// Add position info as data attribute for JS
+	fmt.Fprintf(w, `<div data-file-size="%d" data-start-byte="%d" data-end-byte="%d">%s</div>`,
+		fileSize, startByte, endByte, result.String())
 }
 
 func formatDuration(seconds float64) string {

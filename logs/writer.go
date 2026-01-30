@@ -13,8 +13,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ANSI escape code pattern - matches all common escape sequences
-var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]|\x1b\[\d+;\d+[Hf]`)
+// Cursor position pattern - these should become newlines
+var cursorPosRegex = regexp.MustCompile(`\x1b\[\d+;\d*[Hf]|\x1b\[\d+[Hf]`)
+
+// ANSI escape code pattern - matches all other escape sequences
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]`)
 
 type Writer struct {
 	basePath       string
@@ -54,7 +57,10 @@ func (w *Writer) Write(serverName string, data []byte) error {
 
 // cleanLogData removes ANSI escape codes and control characters from log data
 func cleanLogData(data []byte) []byte {
-	// Remove ANSI escape sequences
+	// Replace cursor positioning with newlines (BIOS uses these instead of \n)
+	data = cursorPosRegex.ReplaceAll(data, []byte("\n"))
+
+	// Remove other ANSI escape sequences
 	data = ansiRegex.ReplaceAll(data, nil)
 
 	// Remove control characters except newline and tab
@@ -113,36 +119,34 @@ func (w *Writer) RotateWithName(serverName, logName string) (string, error) {
 	// Record rotation time
 	w.lastRotation[serverName] = time.Now()
 
-	// If a custom name is provided, create the new file immediately
-	if logName != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", fmt.Errorf("failed to create log directory: %w", err)
-		}
-
-		// Sanitize the log name (remove path separators, add .log extension if needed)
-		logName = filepath.Base(logName)
-		if filepath.Ext(logName) != ".log" {
-			logName = logName + ".log"
-		}
-
-		path := filepath.Join(dir, logName)
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return "", fmt.Errorf("failed to create log file: %w", err)
-		}
-
-		w.files[serverName] = f
-
-		// Update current.log symlink
-		os.Symlink(logName, symlinkPath)
-
-		log.Infof("Rotated log for %s to %s", serverName, logName)
-		return logName, nil
+	// Create directory
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	// New file will be created on next write with timestamp
-	log.Infof("Rotated log for %s", serverName)
-	return "", nil
+	// Use custom name or generate timestamp name
+	if logName == "" {
+		logName = time.Now().Format("2006-01-02_15-04-05")
+	} else {
+		logName = filepath.Base(logName)
+	}
+	if filepath.Ext(logName) != ".log" {
+		logName = logName + ".log"
+	}
+
+	path := filepath.Join(dir, logName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to create log file: %w", err)
+	}
+
+	w.files[serverName] = f
+
+	// Update current.log symlink
+	os.Symlink(logName, symlinkPath)
+
+	log.Infof("Rotated log for %s to %s", serverName, logName)
+	return logName, nil
 }
 
 func (w *Writer) getOrCreateFile(serverName string) (*os.File, error) {
@@ -300,10 +304,7 @@ func (w *Writer) ClearLogs(serverName string) error {
 	dir := filepath.Join(w.basePath, serverName)
 
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
@@ -314,7 +315,24 @@ func (w *Writer) ClearLogs(serverName string) error {
 		}
 	}
 
-	log.Infof("Cleared logs for %s", serverName)
+	// Create a fresh log file immediately
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	filename := time.Now().Format("2006-01-02_15-04-05") + ".log"
+	path := filepath.Join(dir, filename)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	w.files[serverName] = f
+
+	// Update symlink
+	symlinkPath := filepath.Join(dir, "current.log")
+	os.Remove(symlinkPath)
+	os.Symlink(filename, symlinkPath)
+
+	log.Infof("Cleared logs for %s, created %s", serverName, filename)
 	return nil
 }
 
@@ -336,12 +354,14 @@ func (w *Writer) ClearAllLogs() error {
 		return err
 	}
 
+	// Clear and recreate logs for each server
 	for _, serverDir := range entries {
 		if !serverDir.IsDir() {
 			continue
 		}
 
-		serverPath := filepath.Join(w.basePath, serverDir.Name())
+		serverName := serverDir.Name()
+		serverPath := filepath.Join(w.basePath, serverName)
 		logFiles, err := os.ReadDir(serverPath)
 		if err != nil {
 			continue
@@ -353,6 +373,19 @@ func (w *Writer) ClearAllLogs() error {
 				os.Remove(path)
 			}
 		}
+
+		// Create fresh log file
+		filename := time.Now().Format("2006-01-02_15-04-05") + ".log"
+		path := filepath.Join(serverPath, filename)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			continue
+		}
+		w.files[serverName] = f
+
+		// Update symlink
+		symlinkPath := filepath.Join(serverPath, "current.log")
+		os.Symlink(filename, symlinkPath)
 	}
 
 	log.Info("Cleared all logs")

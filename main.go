@@ -17,6 +17,12 @@ import (
 	"console-server/sol"
 )
 
+// Version info - increment based on change magnitude:
+// Major (x.0.0): Breaking changes, major rewrites
+// Minor (0.y.0): New features, significant enhancements
+// Patch (0.0.z): Bug fixes, minor improvements
+const Version = "1.0.0"
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	flag.Parse()
@@ -30,7 +36,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	log.Infof("Starting Console Server")
+	log.Infof("Starting Console Server v%s", Version)
 	log.Infof("  Servers: %d configured", len(cfg.Servers))
 	log.Infof("  Log path: %s", cfg.Logs.Path)
 	log.Infof("  Web port: %d", cfg.Server.Port)
@@ -71,7 +77,7 @@ func main() {
 		}
 	})
 
-	srv := server.New(cfg.Server.Port, scanner, solManager, logWriter, cfg.Servers)
+	srv := server.New(cfg.Server.Port, scanner, solManager, logWriter, cfg.Servers, Version)
 
 	// Start log cleanup routine
 	go func() {
