@@ -414,7 +414,7 @@ async function loadLogContent(serverName, filename, pos) {
         container.innerHTML = html;
 
         // Scroll after DOM update
-        setTimeout(() => {
+        requestAnimationFrame(() => {
             const pre = container.querySelector('pre');
             if (pre) {
                 if (pos >= 95) {
@@ -423,7 +423,7 @@ async function loadLogContent(serverName, filename, pos) {
                     pre.scrollTop = 0;
                 }
             }
-        }, 10);
+        });
     } catch (error) {
         console.error('Failed to load log content:', error);
     }
