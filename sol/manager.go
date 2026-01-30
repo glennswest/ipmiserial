@@ -35,6 +35,7 @@ type Manager struct {
 type LogWriter interface {
 	Write(serverName string, data []byte) error
 	Rotate(serverName string) error
+	CanRotate(serverName string) bool
 }
 
 func NewManager(username, password string, logWriter LogWriter, rebootDetector *RebootDetector, dataPath string) *Manager {
@@ -228,13 +229,8 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 					m.analytics.ProcessText(session.ServerName, string(data))
 				}
 
-				// Check for reboot
-				if m.rebootDetector != nil && m.rebootDetector.Check(session.ServerName, string(data)) {
-					log.Infof("Reboot detected for %s", session.ServerName)
-					if m.logWriter != nil {
-						m.logWriter.Rotate(session.ServerName)
-					}
-				}
+				// Note: Log rotation is now controlled via REST API from PXE server
+				// Automatic reboot detection is disabled to avoid conflicts
 
 				// Broadcast to all subscribers (non-blocking)
 				session.subMu.RLock()

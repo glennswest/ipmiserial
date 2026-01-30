@@ -1,9 +1,11 @@
 package logs
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -11,11 +13,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// ANSI escape code pattern - matches all common escape sequences
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]|\x1b\[\d+;\d+[Hf]`)
+
 type Writer struct {
-	basePath      string
-	retentionDays int
-	files         map[string]*os.File
-	mu            sync.Mutex
+	basePath       string
+	retentionDays  int
+	files          map[string]*os.File
+	lastRotation   map[string]time.Time // track last rotation time per server
+	mu             sync.Mutex
 }
 
 func NewWriter(basePath string, retentionDays int) *Writer {
@@ -23,6 +29,7 @@ func NewWriter(basePath string, retentionDays int) *Writer {
 		basePath:      basePath,
 		retentionDays: retentionDays,
 		files:         make(map[string]*os.File),
+		lastRotation:  make(map[string]time.Time),
 	}
 }
 
@@ -35,8 +42,51 @@ func (w *Writer) Write(serverName string, data []byte) error {
 		return err
 	}
 
-	_, err = f.Write(data)
+	// Clean the data before writing
+	cleaned := cleanLogData(data)
+	if len(cleaned) == 0 {
+		return nil
+	}
+
+	_, err = f.Write(cleaned)
 	return err
+}
+
+// cleanLogData removes ANSI escape codes and control characters from log data
+func cleanLogData(data []byte) []byte {
+	// Remove ANSI escape sequences
+	data = ansiRegex.ReplaceAll(data, nil)
+
+	// Remove control characters except newline and tab
+	result := make([]byte, 0, len(data))
+	for _, c := range data {
+		if c == '\n' || c == '\t' || (c >= 32 && c < 127) {
+			result = append(result, c)
+		}
+	}
+
+	// Remove carriage returns
+	result = bytes.ReplaceAll(result, []byte{'\r'}, nil)
+
+	// Collapse multiple consecutive newlines into max 2
+	for bytes.Contains(result, []byte("\n\n\n")) {
+		result = bytes.ReplaceAll(result, []byte("\n\n\n"), []byte("\n\n"))
+	}
+
+	return result
+}
+
+// CanRotate checks if enough time has passed since last rotation (2 minute cooldown)
+func (w *Writer) CanRotate(serverName string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if lastTime, exists := w.lastRotation[serverName]; exists {
+		if time.Since(lastTime) < 2*time.Minute {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *Writer) Rotate(serverName string) error {
@@ -59,6 +109,9 @@ func (w *Writer) RotateWithName(serverName, logName string) (string, error) {
 
 	// Remove current.log symlink
 	os.Remove(symlinkPath)
+
+	// Record rotation time
+	w.lastRotation[serverName] = time.Now()
 
 	// If a custom name is provided, create the new file immediately
 	if logName != "" {

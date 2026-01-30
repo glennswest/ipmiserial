@@ -4,6 +4,24 @@ let currentServer = null;
 // Per-server sessions: { name: { terminal, fitAddon, eventSource, currentLogFile, lastLogCount } }
 const serverSessions = {};
 
+// URL hash support for direct linking: #server1 or #server1/live or #server1/history
+function parseHash() {
+    const hash = window.location.hash.slice(1); // remove #
+    if (!hash) return null;
+    const parts = hash.split('/');
+    return {
+        server: parts[0],
+        tab: parts[1] || 'live'
+    };
+}
+
+function updateHash(server, tab) {
+    const newHash = tab === 'live' ? server : `${server}/${tab}`;
+    if (window.location.hash !== '#' + newHash) {
+        history.replaceState(null, '', '#' + newHash);
+    }
+}
+
 async function fetchServers() {
     try {
         const response = await fetch('/api/servers');
@@ -106,13 +124,18 @@ function renderServerTabs() {
         initServerSession(server.name);
     });
 
-    // Select first server
-    if (servers.length > 0) {
-        currentServer = servers[0].name;
-    }
-
     // Process htmx on new content
     htmx.process(contentContainer);
+
+    // Apply URL hash state or select first server
+    const state = parseHash();
+    if (state && servers.some(s => s.name === state.server)) {
+        currentServer = state.server;
+        selectServer(state.server);
+        showSubTab(state.server, state.tab);
+    } else if (servers.length > 0) {
+        currentServer = servers[0].name;
+    }
 }
 
 function updateServerStatus() {
@@ -230,6 +253,11 @@ function startServerStream(name) {
 
     eventSource.onmessage = (event) => {
         const decoded = atob(event.data);
+        // Check for clear screen sequences (BIOS often sends these)
+        // \x1b[2J = clear screen, \x1b[H or \x1b[;H = cursor home
+        if (decoded.includes('\x1b[2J') || decoded.includes('\x1b[;H') || decoded.includes('\x1b[1;1H')) {
+            session.terminal.clear();
+        }
         session.terminal.write(decoded);
     };
 
@@ -416,6 +444,29 @@ window.addEventListener('resize', () => {
         if (session.fitAddon) session.fitAddon.fit();
     });
 });
+
+// Listen for hash changes
+window.addEventListener('hashchange', () => {
+    const state = parseHash();
+    if (state && servers.some(s => s.name === state.server)) {
+        selectServer(state.server);
+        showSubTab(state.server, state.tab);
+    }
+});
+
+// Wrap selectServer to update hash
+const originalSelectServer = selectServer;
+selectServer = function(name) {
+    originalSelectServer(name);
+    updateHash(name, 'live');
+};
+
+// Wrap showSubTab to update hash
+const originalShowSubTab = showSubTab;
+showSubTab = function(serverName, tab) {
+    originalShowSubTab(serverName, tab);
+    updateHash(serverName, tab);
+};
 
 // Initial load and periodic refresh
 fetchServers();

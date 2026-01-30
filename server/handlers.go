@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 )
+
 
 type ServerInfo struct {
 	Name      string `json:"name"`
@@ -414,14 +416,17 @@ func (s *Server) handleLogContentHTML(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Read all lines into memory (for now - could optimize with reverse reading)
+	// Read all lines into memory, stripping ANSI escape codes
 	var allLines []string
 	scanner := bufio.NewScanner(file)
 	// Increase buffer size for long lines
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 	for scanner.Scan() {
-		allLines = append(allLines, scanner.Text())
+		line := strings.TrimRight(scanner.Text(), " \t")
+		if line != "" {
+			allLines = append(allLines, line)
+		}
 	}
 
 	totalLines := len(allLines)
