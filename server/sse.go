@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/http"
 
@@ -12,13 +11,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
 
-	// Subscribe to the session's output
-	clientChan, unsubscribe := s.solManager.Subscribe(name)
-	if clientChan == nil {
+	// Check if session exists (without subscribing for now)
+	session := s.solManager.GetSession(name)
+	if session == nil {
 		http.Error(w, "Server not found or no active session", http.StatusNotFound)
 		return
 	}
-	defer unsubscribe()
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -32,29 +30,28 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Subscribe to live updates
+	dataCh, unsubscribe := s.solManager.Subscribe(name)
+	if dataCh == nil {
+		http.Error(w, "Failed to subscribe", http.StatusInternalServerError)
+		return
+	}
+	defer unsubscribe()
+
 	// Send initial connection event
 	fmt.Fprintf(w, "event: connected\ndata: %s\n\n", name)
 	flusher.Flush()
 
-	// Send current log content as backlog
-	if backlog, err := s.logWriter.GetCurrentLogContent(name); err == nil && len(backlog) > 0 {
-		encoded := base64.StdEncoding.EncodeToString(backlog)
-		fmt.Fprintf(w, "data: %s\n\n", encoded)
-		flusher.Flush()
-	}
-
-	ctx := r.Context()
+	// Stream data to client
 	for {
 		select {
-		case <-ctx.Done():
+		case <-r.Context().Done():
 			return
-		case data, ok := <-clientChan:
+		case data, ok := <-dataCh:
 			if !ok {
 				return
 			}
-			// Base64 encode binary data to safely transmit over SSE
-			encoded := base64.StdEncoding.EncodeToString(data)
-			fmt.Fprintf(w, "data: %s\n\n", encoded)
+			fmt.Fprintf(w, "event: data\ndata: %s\n\n", data)
 			flusher.Flush()
 		}
 	}

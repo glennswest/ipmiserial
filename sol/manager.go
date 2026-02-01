@@ -3,9 +3,14 @@ package sol
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -15,6 +20,7 @@ type Session struct {
 	Connected   bool
 	LastError   string
 	cancel      context.CancelFunc
+	cmd         *exec.Cmd
 	subscribers map[chan []byte]struct{}
 	subMu       sync.RWMutex
 }
@@ -22,6 +28,7 @@ type Session struct {
 type Manager struct {
 	username       string
 	password       string
+	logPath        string
 	sessions       map[string]*Session
 	mu             sync.RWMutex
 	logWriter      LogWriter
@@ -39,6 +46,7 @@ func NewManager(username, password string, logWriter LogWriter, rebootDetector *
 	return &Manager{
 		username:       username,
 		password:       password,
+		logPath:        dataPath,
 		sessions:       make(map[string]*Session),
 		logWriter:      logWriter,
 		rebootDetector: rebootDetector,
@@ -59,6 +67,10 @@ func (m *Manager) StartSession(serverName, ip string) {
 	if existing, exists := m.sessions[serverName]; exists {
 		if existing.cancel != nil {
 			existing.cancel()
+		}
+		// Kill existing helper process
+		if existing.cmd != nil && existing.cmd.Process != nil {
+			existing.cmd.Process.Kill()
 		}
 	}
 
@@ -83,6 +95,10 @@ func (m *Manager) StopSession(serverName string) {
 	if session, exists := m.sessions[serverName]; exists {
 		if session.cancel != nil {
 			session.cancel()
+		}
+		// Kill helper process
+		if session.cmd != nil && session.cmd.Process != nil {
+			session.cmd.Process.Kill()
 		}
 		// Close all subscriber channels
 		session.subMu.Lock()
@@ -146,20 +162,19 @@ func (m *Manager) runSession(ctx context.Context, session *Session) {
 		default:
 		}
 
-		log.Infof("Connecting SOL to %s (%s)", session.ServerName, session.IP)
+		log.Infof("Starting SOL helper for %s (%s)", session.ServerName, session.IP)
 
-		err := m.connectSOL(ctx, session)
+		err := m.runHelper(ctx, session)
 		if err != nil {
 			session.Connected = false
 			session.LastError = err.Error()
-			log.Errorf("SOL connection failed for %s: %v", session.ServerName, err)
+			log.Errorf("SOL helper failed for %s: %v", session.ServerName, err)
 		}
 
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
-			// Exponential backoff with max 60s
 			backoff = backoff * 2
 			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
@@ -168,10 +183,130 @@ func (m *Manager) runSession(ctx context.Context, session *Session) {
 	}
 }
 
-func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
-	// SOL disabled - TTY handling on arm64 container causes hangs
-	// TODO: Implement native IPMI SOL using goipmi library
+func (m *Manager) runHelper(ctx context.Context, session *Session) error {
+	// Get current log file path
+	logFile := m.getLogFilePath(session.ServerName)
+
+	// Ensure log directory exists
+	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
+		return fmt.Errorf("failed to create log dir: %w", err)
+	}
+
+	// Start the helper script
+	cmd := exec.CommandContext(ctx, "/usr/local/bin/sol_helper.sh",
+		session.ServerName,
+		session.IP,
+		m.username,
+		m.password,
+		logFile,
+	)
+
+	session.cmd = cmd
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start helper: %w", err)
+	}
+
+	session.Connected = true
+	session.LastError = ""
+	log.Infof("SOL helper started for %s, PID %d, log: %s", session.ServerName, cmd.Process.Pid, logFile)
+
+	// Watch log file for changes and broadcast to subscribers
+	go m.watchLogFile(ctx, session, logFile)
+
+	// Wait for helper to exit
+	err := cmd.Wait()
 	session.Connected = false
-	session.LastError = "SOL disabled - arm64 TTY issues"
-	return fmt.Errorf("SOL disabled")
+
+	if err != nil {
+		return fmt.Errorf("helper exited: %w", err)
+	}
+	return fmt.Errorf("helper exited")
+}
+
+func (m *Manager) getLogFilePath(serverName string) string {
+	// Use current.log symlink - it should already exist from rotate call
+	dir := filepath.Join(m.logPath, serverName)
+	symlinkPath := filepath.Join(dir, "current.log")
+
+	// Follow the symlink to get actual file path
+	if target, err := os.Readlink(symlinkPath); err == nil {
+		return filepath.Join(dir, target)
+	}
+
+	// Fallback: use current.log directly (helper will create it)
+	return symlinkPath
+}
+
+func (m *Manager) watchLogFile(ctx context.Context, session *Session, logFile string) {
+	// Open file for tailing
+	f, err := os.Open(logFile)
+	if err != nil {
+		log.Errorf("Failed to open log file for watching: %v", err)
+		return
+	}
+	defer f.Close()
+
+	// Seek to end
+	f.Seek(0, io.SeekEnd)
+
+	// Create watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Errorf("Failed to create file watcher: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(logFile); err != nil {
+		log.Errorf("Failed to watch log file: %v", err)
+		return
+	}
+
+	buf := make([]byte, 4096)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op&fsnotify.Write == fsnotify.Write {
+				// Read new data
+				for {
+					n, err := f.Read(buf)
+					if n > 0 {
+						data := make([]byte, n)
+						copy(data, buf[:n])
+
+						// Process for analytics
+						if m.analytics != nil {
+							m.analytics.ProcessText(session.ServerName, string(data))
+						}
+
+						// Broadcast to subscribers
+						session.subMu.RLock()
+						for ch := range session.subscribers {
+							select {
+							case ch <- data:
+							default:
+								// Drop if full
+							}
+						}
+						session.subMu.RUnlock()
+					}
+					if err != nil {
+						break
+					}
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Errorf("Watcher error for %s: %v", session.ServerName, err)
+		}
+	}
 }

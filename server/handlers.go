@@ -174,6 +174,13 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 		logName = r.FormValue("name")
 	}
 
+	// Rotate FIRST so the symlink points to the new file
+	newFile, err := s.logWriter.RotateWithName(name, logName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Start SOL session if not already running (triggered by PXE on boot)
 	if session := s.solManager.GetSession(name); session == nil {
 		// Look up IP from scanner
@@ -181,12 +188,6 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 		if srv, exists := servers[name]; exists {
 			s.solManager.StartSession(name, srv.IP)
 		}
-	}
-
-	newFile, err := s.logWriter.RotateWithName(name, logName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
