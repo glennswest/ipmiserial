@@ -7,9 +7,9 @@ FROM scratch
 # Copy the pre-built static binary
 COPY console-server /console-server
 
-# Copy config
-COPY config.yaml.example /etc/console-server/config.yaml
+# Copy config to working directory
+COPY config.yaml.example /config.yaml
 
 EXPOSE 80
 
-ENTRYPOINT ["/console-server"]
+ENTRYPOINT ["/console-server", "-config", "/config.yaml"]
