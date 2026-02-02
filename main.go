@@ -70,8 +70,13 @@ func main() {
 	}
 
 	scanner.OnChange(func(servers map[string]*discovery.Server) {
-		// Just track servers - SOL sessions are started on-demand via rotate API
-		// when PXE signals a server is booting
+		// Start SOL sessions for all discovered servers
+		for name, s := range servers {
+			if solManager.GetSession(name) == nil {
+				log.Infof("Starting SOL session for %s (%s)", name, s.IP)
+				solManager.StartSession(name, s.IP)
+			}
+		}
 	})
 
 	srv := server.New(cfg.Server.Port, scanner, solManager, logWriter, cfg.Servers, Version)
