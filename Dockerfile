@@ -1,20 +1,15 @@
-FROM alpine:latest
+# Scratch container - just the static Go binary
+# Build with: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o console-server .
+# Then create minimal container image
 
-RUN apk add --no-cache openssh ipmitool util-linux && \
-    ssh-keygen -A && \
-    mkdir -p /root/.ssh && \
-    chmod 700 /root/.ssh && \
-    echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
-    echo "StrictModes no" >> /etc/ssh/sshd_config && \
-    mkdir -p /etc/console-server /data/logs && \
-    echo "nameserver 192.168.1.51" > /etc/resolv.conf
+FROM scratch
 
-COPY console-server /usr/local/bin/console-server
-COPY sol_helper.sh /usr/local/bin/sol_helper.sh
-COPY entrypoint.sh /entrypoint.sh
+# Copy the pre-built static binary
+COPY console-server /console-server
+
+# Copy config
 COPY config.yaml.example /etc/console-server/config.yaml
-RUN chmod +x /entrypoint.sh /usr/local/bin/console-server /usr/local/bin/sol_helper.sh
 
-EXPOSE 22 80
+EXPOSE 80
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/console-server"]

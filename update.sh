@@ -8,9 +8,9 @@ REMOTE_PATH="/raid1/images/${CONTAINER}/usr/local/bin/${BINARY_NAME}"
 
 echo "=== Console Server Update ==="
 
-# Build the binary
-echo "Building binary for arm64..."
-GOOS=linux GOARCH=arm64 go build -o ${BINARY_NAME} .
+# Build static binary (no CGO, no libc needed)
+echo "Building static binary for arm64..."
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ${BINARY_NAME} .
 
 # Stop container
 echo "Stopping container..."
