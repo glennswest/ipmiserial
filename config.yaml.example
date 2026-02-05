@@ -1,6 +1,6 @@
 ipmi:
-  username: ADMIN
-  password: ADMIN
+  username: ADMIN    # Example only - change to your credentials
+  password: ADMIN    # Example only - change to your credentials
 
 servers: []
 

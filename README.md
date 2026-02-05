@@ -127,14 +127,18 @@ podman build -t console-server:latest .
 podman save console-server:latest -o console-server.tar
 ```
 
+## Security
+
+**The credentials shown in examples are placeholders only.** Always use strong, unique credentials for your BMC/IPMI accounts. Never commit real credentials to source control. Store `config.yaml` outside of version control or use environment variables.
+
 ## Configuration
 
 Create `config.yaml`:
 
 ```yaml
 ipmi:
-  username: ADMIN
-  password: ADMIN
+  username: ADMIN    # Example only - change to your credentials
+  password: ADMIN    # Example only - change to your credentials
 
 discovery:
   netman_url: "http://network.g10.lo"
@@ -225,8 +229,8 @@ import "github.com/gwest/go-sol"
 session := sol.New(sol.Config{
     Host:     "192.168.11.10",
     Port:     623,
-    Username: "ADMIN",
-    Password: "ADMIN",
+    Username: "ADMIN",    // Example only - change to your credentials
+    Password: "ADMIN",    // Example only - change to your credentials
     Timeout:  30 * time.Second,
 })
 
@@ -285,7 +289,7 @@ podman run -d --name console-server \
 
 1. Check BMC connectivity: `ping 192.168.11.10`
 2. Verify IPMI credentials in config
-3. Check SOL is enabled on BMC: `ipmitool -I lanplus -H 192.168.11.10 -U ADMIN -P ADMIN sol info`
+3. Check SOL is enabled on BMC: `ipmitool -I lanplus -H 192.168.11.10 -U <user> -P <pass> sol info`
 4. View container logs for connection errors
 
 ### Connection Timeouts

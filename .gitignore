@@ -1,1 +1,4 @@
-console_server
+console-server
+console-server-test
+console-server.tar
+config.yaml
