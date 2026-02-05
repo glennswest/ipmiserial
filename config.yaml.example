@@ -17,7 +17,7 @@ reboot_detection:
   chassis_poll_interval: 30s
 
 logs:
-  path: /data/logs
+  path: /var/lib/data/logs
   retention_days: 30
 
 server:

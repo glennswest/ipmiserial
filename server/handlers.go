@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 )
 
 
@@ -23,6 +24,7 @@ type ServerInfo struct {
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	log.Infof("handleVersion called from %s", r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"version": s.version,
@@ -30,8 +32,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
+	log.Infof("handleListServers called from %s", r.RemoteAddr)
 	servers := s.scanner.GetServers()
+	log.Infof("Got %d servers from scanner", len(servers))
 	sessions := s.solManager.GetSessions()
+	log.Infof("Got %d sessions from solManager", len(sessions))
 
 	result := make([]ServerInfo, 0, len(servers))
 	for name, srv := range servers {

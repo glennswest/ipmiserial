@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Console Server - Technical Presentation</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/theme/black.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/plugin/highlight/monokai.css">
+    <style>
+        .reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
+        .reveal pre { width: 100%; font-size: 0.5em; }
+        .reveal .small { font-size: 0.7em; }
+        .reveal .highlight { color: #42affa; }
+        .reveal .warning { color: #f0ad4e; }
+        .reveal .success { color: #5cb85c; }
+        .reveal ul { text-align: left; }
+        .reveal table { font-size: 0.6em; margin: 0 auto; }
+        .reveal th, .reveal td { padding: 0.3em 0.8em; }
+        .two-column { display: flex; gap: 2em; }
+        .two-column > div { flex: 1; }
+        .architecture-box {
+            border: 2px solid #42affa;
+            padding: 1em;
+            margin: 0.5em;
+            border-radius: 8px;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+            <!-- Title Slide -->
+            <section>
+                <h1>Console Server</h1>
+                <h3>Native Go Serial-Over-LAN Aggregation</h3>
+                <p class="small">Bare Metal Server Console Management</p>
+                <p class="small highlight">Version 1.2.0</p>
+            </section>
+
+            <!-- Problem Statement -->
+            <section>
+                <h2>The Problem</h2>
+                <ul>
+                    <li>Managing multiple bare metal servers requires console access</li>
+                    <li>IPMI SOL (Serial-Over-LAN) provides remote serial console</li>
+                    <li class="warning">Traditional approach: ipmitool spawns PTY per server</li>
+                    <li class="warning">Alpine Linux limits: ~5 PTY devices</li>
+                    <li class="warning">No scalability beyond 4-5 concurrent connections</li>
+                </ul>
+            </section>
+
+            <!-- Solution Overview -->
+            <section>
+                <h2>The Solution</h2>
+                <ul>
+                    <li class="success">Native Go IPMI v2.0/RMCP+ implementation</li>
+                    <li class="success">Zero external dependencies (no ipmitool)</li>
+                    <li class="success">Scratch container (~10MB)</li>
+                    <li class="success">Scales to dozens of concurrent connections</li>
+                    <li class="success">Queue-based buffering for bursty boot output</li>
+                </ul>
+            </section>
+
+            <!-- Architecture Overview -->
+            <section>
+                <h2>Architecture</h2>
+                <pre style="font-size: 0.4em;"><code class="text">
+┌─────────────────────────────────────────────────────────────┐
+│                      Console Server                          │
+├─────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │  Discovery   │  │ SOL Manager  │  │ HTTP Server  │      │
+│  │   Scanner    │─▶│   (go-sol)   │◀─│  (Gorilla)   │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│         │                 │                  │              │
+│         ▼                 ▼                  ▼              │
+│    ┌─────────┐      ┌─────────┐       ┌─────────┐         │
+│    │ Netman  │      │Analytics│       │ Web UI  │         │
+│    │   API   │      │ Engine  │       │(xterm.js)│         │
+│    └─────────┘      └─────────┘       └─────────┘         │
+└─────────────────────────────────────────────────────────────┘
+                           │ UDP 623
+                           ▼
+               ┌─────────────────────┐
+               │  BMC (IPMI/SOL)     │
+               └─────────────────────┘
+                </code></pre>
+            </section>
+
+            <!-- Key Components -->
+            <section>
+                <h2>Key Components</h2>
+                <div class="two-column">
+                    <div>
+                        <div class="architecture-box">
+                            <h4>Discovery Scanner</h4>
+                            <ul class="small">
+                                <li>Netman API integration</li>
+                                <li>IP range filtering</li>
+                                <li>Auto-discovery on boot</li>
+                            </ul>
+                        </div>
+                        <div class="architecture-box">
+                            <h4>SOL Manager</h4>
+                            <ul class="small">
+                                <li>Session lifecycle</li>
+                                <li>Reconnection logic</li>
+                                <li>Subscriber broadcast</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="architecture-box">
+                            <h4>go-sol Library</h4>
+                            <ul class="small">
+                                <li>IPMI v2.0 RMCP+</li>
+                                <li>RAKP authentication</li>
+                                <li>10K packet queue</li>
+                            </ul>
+                        </div>
+                        <div class="architecture-box">
+                            <h4>Analytics Engine</h4>
+                            <ul class="small">
+                                <li>BIOS detection</li>
+                                <li>Boot timing</li>
+                                <li>OS identification</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- go-sol Library Deep Dive -->
+            <section>
+                <h2>go-sol Library</h2>
+                <h4>Native IPMI v2.0 Implementation</h4>
+                <pre><code class="go">session := sol.New(sol.Config{
+    Host:     "192.168.11.10",
+    Port:     623,
+    Username: "ADMIN",
+    Password: "ADMIN",
+})
+
+err := session.Connect(ctx)
+
+for data := range session.Read() {
+    fmt.Print(string(data))
+}</code></pre>
+            </section>
+
+            <!-- Protocol Stack -->
+            <section>
+                <h2>IPMI Protocol Stack</h2>
+                <table>
+                    <tr><th>Layer</th><th>Implementation</th></tr>
+                    <tr><td>RMCP Header</td><td>4 bytes: version, sequence, class</td></tr>
+                    <tr><td>Session Header</td><td>12 bytes: auth type, session ID, sequence</td></tr>
+                    <tr><td>RAKP Auth</td><td>4-message handshake, HMAC-SHA1</td></tr>
+                    <tr><td>SOL Payload</td><td>4-byte header + character data</td></tr>
+                    <tr><td>Integrity</td><td>HMAC-SHA1-96 (12 bytes)</td></tr>
+                </table>
+            </section>
+
+            <!-- Buffering Strategy -->
+            <section>
+                <h2>Queue-Based Buffering</h2>
+                <p>Boot sequences generate bursty traffic</p>
+                <pre><code class="go">// Internal queue for bursty traffic
+queue := make(chan []byte, 10000)
+
+// Goroutine drains queue to readCh
+go func() {
+    for data := range queue {
+        select {
+        case s.readCh <- data:
+        case <-s.done:
+            return
+        }
+    }
+}()
+
+// UDP read loop - never blocks
+select {
+case queue <- data:
+default:
+    // Queue full - shouldn't happen
+}</code></pre>
+            </section>
+
+            <!-- Web Interface -->
+            <section>
+                <h2>Web Interface</h2>
+                <div class="two-column">
+                    <div>
+                        <h4>Features</h4>
+                        <ul class="small">
+                            <li>Live terminal (xterm.js)</li>
+                            <li>SSE streaming</li>
+                            <li>Log browser with scrubber</li>
+                            <li>Boot analytics dashboard</li>
+                            <li>Per-server tabs</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4>Tech Stack</h4>
+                        <ul class="small">
+                            <li>Bootstrap 5.3</li>
+                            <li>xterm.js 5.3</li>
+                            <li>htmx for dynamic updates</li>
+                            <li>Server-Sent Events</li>
+                            <li>Embedded in Go binary</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SSE Streaming -->
+            <section>
+                <h2>SSE Streaming</h2>
+                <pre><code class="go">func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "text/event-stream")
+
+    dataCh, unsubscribe := s.solManager.Subscribe(name)
+    defer unsubscribe()
+
+    fmt.Fprintf(w, "event: connected\ndata: %s\n\n", name)
+    flusher.Flush()
+
+    for data := range dataCh {
+        encoded := base64.StdEncoding.EncodeToString(data)
+        fmt.Fprintf(w, "event: data\ndata: %s\n\n", encoded)
+        flusher.Flush()
+    }
+}</code></pre>
+            </section>
+
+            <!-- Analytics -->
+            <section>
+                <h2>Boot Analytics</h2>
+                <div class="two-column">
+                    <div>
+                        <h4>Detection Patterns</h4>
+                        <ul class="small">
+                            <li>BIOS: American Megatrends, Supermicro</li>
+                            <li>PXE: iPXE, Intel Boot Agent</li>
+                            <li>OS: login prompt, systemd</li>
+                            <li>Network: link up/down events</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4>Tracked Metrics</h4>
+                        <ul class="small">
+                            <li>Boot start time</li>
+                            <li>Boot duration</li>
+                            <li>OS/Image detection</li>
+                            <li>Total reboot count</li>
+                            <li>Network interface events</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Deployment -->
+            <section>
+                <h2>Deployment</h2>
+                <h4>Scratch Container on MikroTik RouterOS</h4>
+                <pre><code class="dockerfile">FROM scratch
+
+COPY console-server /console-server
+COPY config.yaml.example /config.yaml
+
+EXPOSE 80
+
+ENTRYPOINT ["/console-server", "-config", "/config.yaml"]</code></pre>
+                <p class="small">Result: ~10MB container image</p>
+            </section>
+
+            <!-- Build Process -->
+            <section>
+                <h2>Build & Deploy</h2>
+                <pre><code class="bash"># Build static binary for ARM64
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    go build -ldflags="-s -w" -o console-server .
+
+# Create container image
+podman build -t console-server:latest .
+podman save console-server:latest -o console-server.tar
+
+# Deploy to MikroTik
+scp console-server.tar admin@rose1.gw.lo:/raid1/tarballs/
+ssh admin@rose1.gw.lo "/container/stop [find name=console.g11.lo]"
+# mkpod handles import and start</code></pre>
+            </section>
+
+            <!-- API Overview -->
+            <section>
+                <h2>API Endpoints</h2>
+                <table>
+                    <tr><th>Endpoint</th><th>Description</th></tr>
+                    <tr><td><code>/api/servers</code></td><td>List servers with status</td></tr>
+                    <tr><td><code>/api/servers/{name}/stream</code></td><td>SSE live console</td></tr>
+                    <tr><td><code>/api/servers/{name}/logs</code></td><td>List log files</td></tr>
+                    <tr><td><code>/api/servers/{name}/analytics</code></td><td>Boot analytics</td></tr>
+                    <tr><td><code>/api/refresh</code></td><td>Trigger discovery</td></tr>
+                </table>
+            </section>
+
+            <!-- Performance -->
+            <section>
+                <h2>Performance</h2>
+                <table>
+                    <tr><th>Metric</th><th>Value</th></tr>
+                    <tr><td>Container Size</td><td>~10 MB</td></tr>
+                    <tr><td>Memory (7 servers)</td><td>~50 MB</td></tr>
+                    <tr><td>CPU (idle)</td><td>&lt;1%</td></tr>
+                    <tr><td>Concurrent Connections</td><td>Tested: 7, Limit: 50+</td></tr>
+                    <tr><td>Packet Buffer</td><td>10,000 per server</td></tr>
+                    <tr><td>Startup Time</td><td>~5 seconds</td></tr>
+                </table>
+            </section>
+
+            <!-- Comparison -->
+            <section>
+                <h2>Before vs After</h2>
+                <table>
+                    <tr><th>Aspect</th><th class="warning">ipmitool</th><th class="success">go-sol</th></tr>
+                    <tr><td>PTY Required</td><td>Yes (1 per server)</td><td>No</td></tr>
+                    <tr><td>Max Connections</td><td>~5 (Alpine)</td><td>50+</td></tr>
+                    <tr><td>Container Size</td><td>~100 MB</td><td>~10 MB</td></tr>
+                    <tr><td>Dependencies</td><td>ipmitool, expect</td><td>None</td></tr>
+                    <tr><td>Boot Data Loss</td><td>Common</td><td>Buffered</td></tr>
+                </table>
+            </section>
+
+            <!-- Future Work -->
+            <section>
+                <h2>Future Enhancements</h2>
+                <ul>
+                    <li>Console recording/playback</li>
+                    <li>Alert notifications (boot failures, long boots)</li>
+                    <li>Power control integration (power on/off/cycle)</li>
+                    <li>Multi-user authentication</li>
+                    <li>Cluster-wide search across logs</li>
+                </ul>
+            </section>
+
+            <!-- Summary -->
+            <section>
+                <h2>Summary</h2>
+                <ul>
+                    <li class="success">Native Go IPMI implementation eliminates PTY limits</li>
+                    <li class="success">Scratch container = minimal attack surface</li>
+                    <li class="success">Queue buffering captures complete boot sequences</li>
+                    <li class="success">Real-time web UI with SSE streaming</li>
+                    <li class="success">Boot analytics for operational insights</li>
+                </ul>
+                <br>
+                <p class="highlight">http://console.g11.lo</p>
+            </section>
+
+            <!-- Q&A -->
+            <section>
+                <h1>Questions?</h1>
+                <p class="small">Source: /Volumes/minihome/gwest/projects/console_server</p>
+                <p class="small">go-sol: /Volumes/minihome/gwest/projects/go-sol</p>
+            </section>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/plugin/highlight/highlight.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            slideNumber: true,
+            plugins: [RevealHighlight],
+            transition: 'slide',
+            backgroundTransition: 'fade'
+        });
+    </script>
+</body>
+</html>

@@ -1,196 +1,320 @@
 # Console Server
 
-A Go-based console server that captures Serial-over-LAN (SOL) output from Supermicro IPMI servers, logs to files, and provides a web UI with per-server tabs showing live and historical output.
+A high-performance, native Go implementation of Serial-Over-LAN (SOL) console aggregation for bare metal server management.
+
+## Features
+
+- **Native Go SOL Implementation**: Pure Go IPMI v2.0/RMCP+ protocol stack - no external dependencies like `ipmitool`
+- **Scalable Architecture**: Handles dozens of concurrent SOL connections with minimal resource usage
+- **Live Console Streaming**: Real-time SSE-based console output in web browser
+- **Boot Analytics**: Automatic detection of reboots, boot timing, and OS identification
+- **Log Management**: Automatic log rotation, retention policies, and searchable history
+- **Scratch Container**: Minimal container image (~10MB) with just the static Go binary
+- **Auto-Discovery**: Integrates with Netman for automatic server discovery via IPMI network scanning
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Console Server (Go)                       │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │  Discovery   │  │  SOL Manager │  │   Web Server     │   │
-│  │  (subnet     │  │  (per-server │  │   (tabs + SSE    │   │
-│  │   scanner)   │  │   goroutine) │  │    streaming)    │   │
-│  └──────────────┘  └──────────────┘  └──────────────────┘   │
-│         │                 │                   │              │
-│         ▼                 ▼                   ▼              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │              Server State Manager                     │   │
-│  │  - Tracks power state, reboot detection               │   │
-│  │  - Manages log file rotation                          │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-          │
-          ▼
-┌─────────────────┐
-│  /data/logs/    │
-│  └─ <hostname>/ │
-│     └─ YYYY-MM- │
-│        DD_HH-   │
-│        MM-SS.log│
-└─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Console Server                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+│  │   Discovery  │    │  SOL Manager │    │  HTTP Server │      │
+│  │   Scanner    │───▶│              │◀───│   (Gorilla)  │      │
+│  └──────────────┘    └──────────────┘    └──────────────┘      │
+│         │                   │                    │               │
+│         ▼                   ▼                    ▼               │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+│  │    Netman    │    │   go-sol     │    │   Web UI     │      │
+│  │     API      │    │   Library    │    │  (xterm.js)  │      │
+│  └──────────────┘    └──────────────┘    └──────────────┘      │
+│                            │                                     │
+│                            ▼                                     │
+│                     ┌──────────────┐                            │
+│                     │  Analytics   │                            │
+│                     │   Engine     │                            │
+│                     └──────────────┘                            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ IPMI/RMCP+ (UDP 623)
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Bare Metal Servers                          │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           │
+│  │ Server1 │  │ Server2 │  │ Server3 │  │   ...   │           │
+│  │  BMC    │  │  BMC    │  │  BMC    │  │         │           │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘           │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Components
+### Component Overview
 
-### 1. Discovery Service
-- Scans 192.168.11.0/24 subnet for IPMI (UDP 623)
-- Uses DNS reverse lookup to get server names
-- Periodic rescan (configurable, default 5 min)
-- Filters out non-responding/non-IPMI hosts
+| Component | Description |
+|-----------|-------------|
+| **Discovery Scanner** | Polls Netman API for IPMI hosts, filters by IP range, manages server inventory |
+| **SOL Manager** | Manages concurrent SOL sessions, handles reconnection with exponential backoff |
+| **go-sol Library** | Native Go IPMI v2.0/RMCP+ implementation with queue-based buffering for bursty traffic |
+| **Analytics Engine** | Detects BIOS boot patterns, tracks boot timing, identifies OS/images |
+| **HTTP Server** | RESTful API + SSE streaming + static file serving for web UI |
+| **Log Writer** | ANSI-cleaned log storage with rotation and retention management |
 
-### 2. SOL Manager
-- Uses ipmitool CLI for SOL connections (most reliable with Supermicro)
-- One goroutine per server managing the SOL session
-- Reconnects on disconnect with backoff
-- Pipes output to log file and broadcast channel
+### Data Flow
 
-### 3. Reboot Detection
-- SOL parsing: Regex for BIOS strings like "POST", "BIOS", "Booting"
-- IPMI polling: Check chassis power status every 30s
-- On reboot detected: close current log, start new timestamped log
+1. **Discovery**: Scanner queries Netman for hosts on IPMI network (192.168.11.0/24)
+2. **Connection**: SOL Manager establishes IPMI v2.0 authenticated sessions to each BMC
+3. **Data Capture**: go-sol library receives console output via UDP, buffers with 10k-entry queue
+4. **Processing**: Data is written to logs, analyzed for boot patterns, and broadcast to SSE subscribers
+5. **Display**: Web UI receives SSE events and renders in xterm.js terminal emulator
 
-### 4. Log Management
-- Directory structure: `/data/logs/<hostname>/`
-- Filename format: `YYYY-MM-DD_HH-MM-SS.log`
-- Current log symlinked as `current.log`
-- Retention policy configurable (default keep 30 days)
+## File Structure
 
-### 5. Web UI
-- Single page app with Bootstrap/vanilla JS
-- Server-Sent Events (SSE) for live streaming
-- Tab per server showing:
-  - Live tab: Real-time console output (SSE stream)
-  - History tab: List of past log files with viewer
+```
+console_server/
+├── main.go                 # Entry point, component wiring
+├── config/
+│   └── config.go           # YAML config loading
+├── discovery/
+│   └── scanner.go          # Netman integration, server tracking
+├── sol/
+│   ├── manager.go          # SOL session lifecycle management
+│   ├── reboot.go           # Reboot pattern detection
+│   └── analytics.go        # Boot analytics engine
+├── logs/
+│   └── writer.go           # Log file management, ANSI cleaning
+├── server/
+│   ├── server.go           # HTTP server, routing
+│   ├── handlers.go         # REST API handlers
+│   ├── sse.go              # Server-Sent Events streaming
+│   └── web/                # Embedded static files
+│       ├── index.html
+│       ├── app.js
+│       └── style.css
+├── config.yaml.example
+├── Dockerfile
+├── build.sh
+├── deploy.sh
+└── go.mod
+```
+
+## Installation
+
+### Prerequisites
+
+- Go 1.21+ (for building)
+- Podman (for container image creation)
+- Target platform: ARM64 (MikroTik RouterOS container)
+
+### Building
+
+```bash
+# Build the container image
+./build.sh
+
+# Deploy to MikroTik router
+./deploy.sh
+```
+
+### Manual Build
+
+```bash
+# Build static binary for ARM64
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o console-server .
+
+# Create container with podman
+podman build -t console-server:latest .
+podman save console-server:latest -o console-server.tar
+```
 
 ## Configuration
 
+Create `config.yaml`:
+
 ```yaml
-# config.yaml
 ipmi:
-  username: admin
-  password: ${IPMI_PASSWORD}  # from env
+  username: ADMIN
+  password: ADMIN
 
 discovery:
-  subnet: "192.168.11.0/24"
-  interval: 5m
+  netman_url: "http://network.g10.lo"
+  ip_range_min: 10
+  ip_range_max: 199
+
+logs:
+  path: /var/lib/data/logs
+  retention_days: 30
+
+server:
+  port: 80
 
 reboot_detection:
   sol_patterns:
     - "POST"
     - "BIOS"
     - "Booting"
-  chassis_poll_interval: 30s
 
-logs:
-  path: /data/logs
-  retention_days: 30
-
-server:
-  port: 8080
+# Optional: static server definitions (in addition to auto-discovery)
+servers:
+  - name: server1
+    host: 192.168.11.10
+    macs:
+      - "00:25:90:xx:xx:xx"
 ```
 
-## File Structure
+## API Reference
 
+### Servers
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/servers` | GET | List all servers with connection status |
+| `/api/servers/{name}/status` | GET | Get detailed status for a server |
+| `/api/servers/{name}/stream` | GET | SSE stream of live console output |
+| `/api/refresh` | POST | Trigger immediate Netman refresh |
+
+### Logs
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/servers/{name}/logs` | GET | List log files for a server |
+| `/api/servers/{name}/logs/{file}` | GET | Get log file content |
+| `/api/servers/{name}/logs/{file}/info` | GET | Get log file metadata |
+| `/api/servers/{name}/logs/clear` | POST | Clear all logs for a server |
+| `/api/servers/{name}/logs/rotate` | POST | Rotate current log (start new file) |
+| `/api/logs/clear` | POST | Clear logs for all servers |
+
+### Analytics
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/servers/{name}/analytics` | GET | Get boot analytics for a server |
+| `/api/analytics` | GET | Get analytics for all servers |
+
+### Utilities
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/version` | GET | Get server version |
+| `/api/lookup/mac/{mac}` | GET | Lookup server by MAC address |
+
+## Web Interface
+
+Access the web UI at `http://console.g11.lo/`
+
+### Features
+
+- **Live Tab**: Real-time terminal with xterm.js, supports selection and copy
+- **Logs Tab**: Browse historical logs with vertical scrubber for navigation
+- **Analytics Tab**: Boot timing, OS detection, network interface events
+- **Server Tabs**: Quick switching between servers with status indicators
+
+### Keyboard Shortcuts
+
+- `Ctrl+C` / `Cmd+C`: Copy selected text from terminal
+- Click and drag: Select text in terminal
+
+## go-sol Library
+
+The native SOL implementation is in the separate `go-sol` package:
+
+```go
+import "github.com/gwest/go-sol"
+
+// Create session
+session := sol.New(sol.Config{
+    Host:     "192.168.11.10",
+    Port:     623,
+    Username: "ADMIN",
+    Password: "ADMIN",
+    Timeout:  30 * time.Second,
+})
+
+// Connect
+err := session.Connect(ctx)
+
+// Read console output
+for data := range session.Read() {
+    fmt.Print(string(data))
+}
 ```
-console_server/
-├── main.go                 # Entry point
-├── config/
-│   └── config.go           # Config loading
-├── discovery/
-│   └── scanner.go          # Subnet scanning, DNS lookup
-├── sol/
-│   ├── manager.go          # SOL session management
-│   └── reboot.go           # Reboot detection logic
-├── logs/
-│   └── writer.go           # Log file management
-├── server/
-│   ├── server.go           # HTTP server setup
-│   ├── handlers.go         # API handlers
-│   └── sse.go              # SSE streaming
-├── web/
-│   ├── index.html          # Main page
-│   ├── app.js              # Frontend logic
-│   └── style.css           # Styles
-├── config.yaml.example
-└── go.mod
-```
 
-## API Endpoints
+### Key Features
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /` | Web UI |
-| `GET /api/servers` | List discovered servers with status |
-| `GET /api/servers/{name}/stream` | SSE stream of live output |
-| `GET /api/servers/{name}/logs` | List log files for server |
-| `GET /api/servers/{name}/logs/{filename}` | Get log file content |
-| `GET /api/servers/{name}/status` | Server power/connection status |
+- IPMI v2.0 RMCP+ authentication (RAKP)
+- HMAC-SHA1 integrity and authentication
+- Queue-based buffering (10,000 packets) for bursty boot output
+- Automatic ACK handling
+- Proper session teardown
 
 ## Deployment
 
-Target server: `console.g11.lo`
+### MikroTik RouterOS
 
-### Initial Install
-
-```bash
-./install.sh
-```
-
-This will:
-- Build the Go binary
-- Copy binary and config to console.g11.lo
-- Set up systemd service
-- Create log directories
-- Start the service
-
-### Quick Update (Binary Only)
+The console server runs as a container on MikroTik RouterOS:
 
 ```bash
-./update.sh
+# Import container image
+/container/add file=console-server.tar interface=veth5 \
+    root-dir=raid1/images/console.g11.lo \
+    mounts=console.g11.lo.0,console.g11.lo.1 \
+    logging=yes start-on-boot=yes
+
+# Create volume mounts
+/container/mounts/add name=console.g11.lo.0 \
+    src=/raid1/volumes/console.g11.lo.0 dst=/var/lib/data
+/container/mounts/add name=console.g11.lo.1 \
+    src=/raid1/volumes/console.g11.lo.1 dst=/root
+
+# Start container
+/container/start [find name=console.g11.lo]
 ```
 
-This will:
-- Build Go binary for arm64
-- Stop the container on rose (192.168.1.88)
-- Copy binary to container filesystem
-- Start container
-
-### Full Rebuild (Container Image)
+### Docker/Podman
 
 ```bash
-./build.sh   # Build container image tarball
-./deploy.sh  # Deploy via mkpod
+podman run -d --name console-server \
+    -p 80:80 \
+    -v /data:/var/lib/data \
+    console-server:latest
 ```
 
-Use full rebuild when changing dependencies, Dockerfile, or entrypoint.
+## Troubleshooting
+
+### No Console Output
+
+1. Check BMC connectivity: `ping 192.168.11.10`
+2. Verify IPMI credentials in config
+3. Check SOL is enabled on BMC: `ipmitool -I lanplus -H 192.168.11.10 -U ADMIN -P ADMIN sol info`
+4. View container logs for connection errors
+
+### Connection Timeouts
+
+- Ensure UDP port 623 is accessible from container to BMC network
+- Check for firewall rules blocking IPMI traffic
+- Verify BMC SOL configuration (baud rate, privilege level)
+
+### High Memory Usage
+
+The go-sol library buffers up to 10,000 packets per server during bursty output (boot sequences). This is by design to prevent data loss. Memory usage will stabilize after boot completes.
 
 ## Dependencies
 
-- Go 1.21+
-- ipmitool (must be installed on console.g11.lo)
-
 ### Go Modules
-- `github.com/spf13/viper` - Config
-- `github.com/gorilla/mux` - Router
-- `github.com/sirupsen/logrus` - Logging
 
-## Implementation Order
+- `github.com/gorilla/mux` - HTTP router
+- `github.com/sirupsen/logrus` - Structured logging
+- `gopkg.in/yaml.v3` - YAML configuration
+- `github.com/gwest/go-sol` - Native IPMI SOL library (local)
 
-1. Project setup (go.mod, config loading)
-2. Discovery service (subnet scan + DNS)
-3. SOL manager (ipmitool wrapper, reconnect logic)
-4. Log writer (file rotation, reboot detection)
-5. Web server + API endpoints
-6. SSE streaming
-7. Web UI (HTML/JS)
-8. Testing and deployment
+### Frontend
 
-## Verification
+- Bootstrap 5.3 - UI framework
+- xterm.js 5.3 - Terminal emulator
+- htmx - Dynamic HTML updates
 
-1. Build and run locally: `go build && ./console_server`
-2. Check discovery finds servers: `curl localhost:8080/api/servers`
-3. Check SOL streaming: `curl localhost:8080/api/servers/{name}/stream`
-4. Verify web UI loads and shows tabs
-5. Test reboot detection by rebooting a server
+## Version History
+
+- **1.2.0**: Native Go SOL implementation, scratch container, queue-based buffering
+- **1.1.0**: Analytics engine, boot detection, htmx-based UI
+- **1.0.0**: Initial release with ipmitool backend

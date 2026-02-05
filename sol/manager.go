@@ -160,11 +160,18 @@ func (m *Manager) runSession(ctx context.Context, session *Session) {
 
 		log.Infof("Connecting native SOL to %s (%s)", session.ServerName, session.IP)
 
+		connectTime := time.Now()
 		err := m.connectSOL(ctx, session)
 		if err != nil {
 			session.Connected = false
 			session.LastError = err.Error()
 			log.Errorf("SOL connection failed for %s: %v", session.ServerName, err)
+
+			// If we were connected for more than 30 seconds, reset backoff
+			// (this was a session that worked, not an immediate connection failure)
+			if time.Since(connectTime) > 30*time.Second {
+				backoff = time.Second
+			}
 		}
 
 		select {
@@ -188,11 +195,15 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 
 	// Create native SOL session
 	solSession := sol.New(sol.Config{
-		Host:     session.IP,
-		Port:     623,
-		Username: m.username,
-		Password: m.password,
-		Timeout:  30 * time.Second,
+		Host:              session.IP,
+		Port:              623,
+		Username:          m.username,
+		Password:          m.password,
+		Timeout:           30 * time.Second,
+		InactivityTimeout: 5 * time.Minute,
+		Logf: func(format string, args ...interface{}) {
+			log.Infof("[go-sol] "+format, args...)
+		},
 	})
 
 	// Connect with timeout

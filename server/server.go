@@ -74,6 +74,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/version", s.handleVersion).Methods("GET")
 	api.HandleFunc("/servers", s.handleListServers).Methods("GET")
 	api.HandleFunc("/servers/{name}/stream", s.handleStream).Methods("GET")
+	log.Info("Registered route: /api/servers/{name}/stream")
 	api.HandleFunc("/servers/{name}/logs", s.handleListLogs).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/{filename}", s.handleGetLog).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/{filename}/info", s.handleLogInfo).Methods("GET")
@@ -97,7 +98,15 @@ func (s *Server) setupRoutes() {
 	s.router.PathPrefix("/").Handler(http.FileServer(http.FS(webContent)))
 }
 
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Infof("MIDDLEWARE: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Run(ctx context.Context) error {
+	s.router.Use(loggingMiddleware)
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
 		Handler: s.router,
@@ -105,13 +114,17 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
+		log.Info("Context done, shutting down HTTP server")
 		s.httpServer.Shutdown(context.Background())
 	}()
 
 	log.Infof("Starting web server on port %d", s.port)
+	log.Infof("Routes configured: /api/version, /api/servers, etc.")
 	err := s.httpServer.ListenAndServe()
 	if err == http.ErrServerClosed {
+		log.Info("HTTP server closed cleanly")
 		return nil
 	}
+	log.Errorf("HTTP server error: %v", err)
 	return err
 }
