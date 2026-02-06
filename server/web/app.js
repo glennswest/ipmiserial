@@ -139,11 +139,10 @@ function renderServerTabs() {
     // Apply URL hash state or select first server
     const state = parseHash();
     if (state && servers.some(s => s.name === state.server)) {
-        currentServer = state.server;
         selectServer(state.server);
         showSubTab(state.server, state.tab);
     } else if (servers.length > 0) {
-        currentServer = servers[0].name;
+        selectServer(servers[0].name);
     }
 }
 
@@ -239,9 +238,6 @@ function initServerSession(name) {
         fit.fit();
     }, 100);
 
-    // Start streaming
-    startServerStream(name);
-
     // Start checking for new log files
     checkForNewLogs(name);
 }
@@ -262,22 +258,25 @@ function startServerStream(name) {
 
     eventSource.onmessage = (event) => {
         const decoded = atob(event.data);
-        // Check for clear screen sequences (BIOS often sends these)
-        // \x1b[2J = clear screen, \x1b[H or \x1b[;H = cursor home
-        if (decoded.includes('\x1b[2J') || decoded.includes('\x1b[;H') || decoded.includes('\x1b[1;1H')) {
-            session.terminal.clear();
-        }
         session.terminal.write(decoded);
     };
 
     eventSource.onerror = (error) => {
         console.error('SSE error for', name, ':', error);
-        if (eventSource.readyState === EventSource.CLOSED) {
+        if (eventSource.readyState === EventSource.CLOSED && currentServer === name) {
             setTimeout(() => startServerStream(name), 3000);
         }
     };
 
     session.eventSource = eventSource;
+}
+
+function stopServerStream(name) {
+    const session = serverSessions[name];
+    if (session && session.eventSource) {
+        session.eventSource.close();
+        session.eventSource = null;
+    }
 }
 
 // Check for new log files and auto-switch when a new boot happens
@@ -307,6 +306,11 @@ async function checkForNewLogs(serverName) {
 }
 
 function selectServer(name) {
+    // Stop SSE stream on the previously selected server
+    if (currentServer && currentServer !== name) {
+        stopServerStream(currentServer);
+    }
+
     currentServer = name;
 
     // Update tab active states
@@ -320,6 +324,9 @@ function selectServer(name) {
         panel.classList.remove('show', 'active');
     });
     document.getElementById(`panel-${name}`).classList.add('show', 'active');
+
+    // Start SSE stream for the newly selected server
+    startServerStream(name);
 
     // Refit the terminal
     const session = serverSessions[name];

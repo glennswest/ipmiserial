@@ -239,6 +239,24 @@ func (w *Writer) GetCurrentLogContent(serverName string) ([]byte, error) {
 	return data, nil
 }
 
+func (w *Writer) SyncFile(serverName string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if f, exists := w.files[serverName]; exists {
+		f.Sync()
+	}
+}
+
+func (w *Writer) GetCurrentLogTarget(serverName string) (filename, fullPath string, err error) {
+	symlinkPath := filepath.Join(w.basePath, serverName, "current.log")
+	target, err := os.Readlink(symlinkPath)
+	if err != nil {
+		return "", "", err
+	}
+	return target, filepath.Join(w.basePath, serverName, target), nil
+}
+
 func (w *Writer) Cleanup() {
 	if w.retentionDays <= 0 {
 		return

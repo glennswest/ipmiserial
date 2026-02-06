@@ -17,10 +17,8 @@ type Session struct {
 	IP          string
 	Connected   bool
 	LastError   string
-	cancel      context.CancelFunc
-	solSession  *sol.Session
-	subscribers map[chan []byte]struct{}
-	subMu       sync.RWMutex
+	cancel     context.CancelFunc
+	solSession *sol.Session
 }
 
 type Manager struct {
@@ -73,11 +71,10 @@ func (m *Manager) StartSession(serverName, ip string) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	session := &Session{
-		ServerName:  serverName,
-		IP:          ip,
-		Connected:   false,
-		cancel:      cancel,
-		subscribers: make(map[chan []byte]struct{}),
+		ServerName: serverName,
+		IP:         ip,
+		Connected:  false,
+		cancel:     cancel,
 	}
 	m.sessions[serverName] = session
 	m.mu.Unlock()
@@ -96,13 +93,6 @@ func (m *Manager) StopSession(serverName string) {
 		if session.solSession != nil {
 			session.solSession.Close()
 		}
-		// Close all subscriber channels
-		session.subMu.Lock()
-		for ch := range session.subscribers {
-			close(ch)
-		}
-		session.subscribers = nil
-		session.subMu.Unlock()
 		delete(m.sessions, serverName)
 	}
 }
@@ -122,30 +112,6 @@ func (m *Manager) GetSessions() map[string]*Session {
 		result[k] = v
 	}
 	return result
-}
-
-func (m *Manager) Subscribe(serverName string) (<-chan []byte, func()) {
-	m.mu.RLock()
-	session, exists := m.sessions[serverName]
-	m.mu.RUnlock()
-
-	if !exists {
-		return nil, nil
-	}
-
-	ch := make(chan []byte, 100)
-
-	session.subMu.Lock()
-	session.subscribers[ch] = struct{}{}
-	session.subMu.Unlock()
-
-	unsubscribe := func() {
-		session.subMu.Lock()
-		delete(session.subscribers, ch)
-		session.subMu.Unlock()
-	}
-
-	return ch, unsubscribe
 }
 
 func (m *Manager) runSession(ctx context.Context, session *Session) {
@@ -251,17 +217,6 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 			if m.analytics != nil {
 				m.analytics.ProcessText(session.ServerName, string(data))
 			}
-
-			// Broadcast to subscribers
-			session.subMu.RLock()
-			for ch := range session.subscribers {
-				select {
-				case ch <- data:
-				default:
-					// Drop if full
-				}
-			}
-			session.subMu.RUnlock()
 		}
 	}
 }
