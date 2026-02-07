@@ -133,6 +133,12 @@ func (s *Scanner) fetchFromNetman() {
 
 	s.mu.Lock()
 
+	// Build a set of IPs already known (from config or prior discovery)
+	knownIPs := make(map[string]string) // IP -> name
+	for name, srv := range s.servers {
+		knownIPs[srv.IP] = name
+	}
+
 	// Track which servers we found
 	hasNewServers := false
 
@@ -142,7 +148,7 @@ func (s *Scanner) fetchFromNetman() {
 			continue
 		}
 
-		// Determine server name: prefer hostname, then dns_name, then reverse DNS, fall back to IP
+		// Determine server name: prefer hostname, then dns_name, fall back to IP
 		name := h.Hostname
 		if name == "" && h.DNSName != "" {
 			name = h.DNSName
@@ -154,6 +160,16 @@ func (s *Scanner) fetchFromNetman() {
 		// But don't truncate if it's an IP address
 		if idx := strings.Index(name, "."); idx > 0 && !isIPAddress(name) {
 			name = name[:idx]
+		}
+
+		// If this IP is already known under a different name, update that entry instead
+		if existingName, exists := knownIPs[h.IPAddress]; exists && existingName != name {
+			existing := s.servers[existingName]
+			existing.Online = h.IsOnline
+			if h.MAC != "" {
+				existing.MAC = h.MAC
+			}
+			continue
 		}
 
 		// Add or update server
@@ -171,6 +187,7 @@ func (s *Scanner) fetchFromNetman() {
 				Online:   h.IsOnline,
 				MAC:      h.MAC,
 			}
+			knownIPs[h.IPAddress] = name
 			log.Infof("Discovered server from netman: %s (%s)", name, h.IPAddress)
 			hasNewServers = true
 		}

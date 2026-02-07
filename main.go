@@ -36,6 +36,13 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Log to file instead of stdout to avoid MikroTik container pipe saturation
+	os.MkdirAll(cfg.Logs.Path, 0755)
+	logFile, err := os.OpenFile(cfg.Logs.Path+"/console-server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		log.SetOutput(logFile)
+	}
+
 	log.Infof("Starting Console Server v%s", Version)
 	log.Infof("  Netman: %s", cfg.Discovery.NetmanURL)
 	log.Infof("  IP Range: 192.168.11.%d-%d", cfg.Discovery.IPRangeMin, cfg.Discovery.IPRangeMax)

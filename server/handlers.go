@@ -33,11 +33,13 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 	servers := s.scanner.GetServers()
 	sessions := s.solManager.GetSessions()
 
-	// Build set of known names from scanner
+	// Build set of known names and IPs from scanner
 	seen := make(map[string]bool)
+	knownIPs := make(map[string]bool)
 	result := make([]ServerInfo, 0)
 	for name, srv := range servers {
 		seen[name] = true
+		knownIPs[srv.IP] = true
 		info := ServerInfo{
 			Name:   name,
 			IP:     srv.IP,
@@ -52,7 +54,7 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 
 	// Add servers that have log directories but aren't in scanner
 	for _, name := range s.logWriter.ListServerDirs() {
-		if seen[name] {
+		if seen[name] || knownIPs[name] {
 			continue
 		}
 		info := ServerInfo{Name: name}
