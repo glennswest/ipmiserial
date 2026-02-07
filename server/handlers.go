@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	log "github.com/sirupsen/logrus"
 )
 
 
@@ -24,7 +23,6 @@ type ServerInfo struct {
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	log.Infof("handleVersion called from %s", r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"version": s.version,
@@ -32,25 +30,36 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
-	log.Infof("handleListServers called from %s", r.RemoteAddr)
 	servers := s.scanner.GetServers()
-	log.Infof("Got %d servers from scanner", len(servers))
 	sessions := s.solManager.GetSessions()
-	log.Infof("Got %d sessions from solManager", len(sessions))
 
-	result := make([]ServerInfo, 0, len(servers))
+	// Build set of known names from scanner
+	seen := make(map[string]bool)
+	result := make([]ServerInfo, 0)
 	for name, srv := range servers {
+		seen[name] = true
 		info := ServerInfo{
 			Name:   name,
 			IP:     srv.IP,
 			Online: srv.Online,
 		}
-
 		if session, exists := sessions[name]; exists {
 			info.Connected = session.Connected
 			info.LastError = session.LastError
 		}
+		result = append(result, info)
+	}
 
+	// Add servers that have log directories but aren't in scanner
+	for _, name := range s.logWriter.ListServerDirs() {
+		if seen[name] {
+			continue
+		}
+		info := ServerInfo{Name: name}
+		if session, exists := sessions[name]; exists {
+			info.Connected = session.Connected
+			info.LastError = session.LastError
+		}
 		result = append(result, info)
 	}
 

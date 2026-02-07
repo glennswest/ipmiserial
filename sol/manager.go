@@ -168,7 +168,7 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 		Timeout:           30 * time.Second,
 		InactivityTimeout: 5 * time.Minute,
 		Logf: func(format string, args ...interface{}) {
-			log.Infof("[go-sol] "+format, args...)
+			log.Debugf("[go-sol] "+format, args...)
 		},
 	})
 

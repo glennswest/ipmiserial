@@ -15,13 +15,15 @@ import (
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
-	log.Infof("handleStream: %s from %s", name, r.RemoteAddr)
 
-	// Validate server exists via scanner (works even during SOL reconnect)
-	knownServers := s.scanner.GetServers()
-	if _, ok := knownServers[name]; !ok {
-		http.Error(w, "Server not found", http.StatusNotFound)
-		return
+	// Validate server exists — check log target first (no locks), fall back to scanner
+	_, _, logErr := s.logWriter.GetCurrentLogTarget(name)
+	if logErr != nil {
+		knownServers := s.scanner.GetServers()
+		if _, ok := knownServers[name]; !ok {
+			http.Error(w, "Server not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	// SSE headers
@@ -39,72 +41,84 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: %s\n\n", name)
 	flusher.Flush()
 
-	// Resolve current log file and send catchup (~last 4KB)
-	curTarget, curPath, err := s.logWriter.GetCurrentLogTarget(name)
-	if err != nil {
-		log.Warnf("handleStream: no current log for %s: %v", name, err)
-		// No log yet — just start polling
-		curTarget = ""
-		curPath = ""
-	}
+	// Resolve current log file, open for reading, send catchup
+	curTarget, curPath, _ := s.logWriter.GetCurrentLogTarget(name)
 
+	var readFile *os.File
 	var offset int64
 	if curPath != "" {
-		s.logWriter.SyncFile(name)
-		offset = sendCatchup(w, flusher, curPath)
+		var err error
+		readFile, err = os.Open(curPath)
+		if err == nil {
+			// Send last ~4KB as catchup
+			if info, _ := readFile.Stat(); info != nil {
+				size := info.Size()
+				const catchupSize = 4096
+				if size > catchupSize {
+					readFile.Seek(size-catchupSize, io.SeekStart)
+					offset = size - catchupSize
+				}
+				buf := make([]byte, size-offset)
+				n, _ := readFile.Read(buf)
+				if n > 0 {
+					encoded := base64.StdEncoding.EncodeToString(buf[:n])
+					fmt.Fprintf(w, "data: %s\n\n", encoded)
+					flusher.Flush()
+					offset += int64(n)
+				}
+			}
+		}
 	}
+	defer func() {
+		if readFile != nil {
+			readFile.Close()
+		}
+	}()
 
-	// Poll loop: 200ms interval
-	ticker := time.NewTicker(200 * time.Millisecond)
+	// Fast poll for new data, slow poll for rotation
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+
+	rotationCheck := time.NewTicker(3 * time.Second)
+	defer rotationCheck.Stop()
+
+	buf := make([]byte, 16384)
 
 	for {
 		select {
 		case <-r.Context().Done():
-			log.Infof("handleStream: client disconnected for %s", name)
 			return
-		case <-ticker.C:
-			// Sync buffered writes to disk
-			s.logWriter.SyncFile(name)
 
-			// Check for log rotation (symlink target changed)
+		case <-rotationCheck.C:
 			newTarget, newPath, err := s.logWriter.GetCurrentLogTarget(name)
 			if err != nil {
 				continue
 			}
-
-			if curTarget == "" {
-				// First time seeing a log file
+			if curTarget == "" || newTarget != curTarget {
+				if curTarget != "" {
+					log.Infof("handleStream: log rotated for %s: %s -> %s", name, curTarget, newTarget)
+				}
 				curTarget = newTarget
 				curPath = newPath
-				offset = 0
-			} else if newTarget != curTarget {
-				// Rotation happened — reset to new file
-				log.Infof("handleStream: log rotated for %s: %s -> %s", name, curTarget, newTarget)
-				curTarget = newTarget
-				curPath = newPath
+				if readFile != nil {
+					readFile.Close()
+				}
+				readFile, _ = os.Open(curPath)
 				offset = 0
 			}
 
-			// Stat for size change
-			info, err := os.Stat(curPath)
-			if err != nil {
+		case <-ticker.C:
+			if readFile == nil {
+				// Try to open if we didn't have a file yet
+				if curPath == "" {
+					curTarget, curPath, _ = s.logWriter.GetCurrentLogTarget(name)
+				}
+				if curPath != "" {
+					readFile, _ = os.Open(curPath)
+				}
 				continue
 			}
-			size := info.Size()
-			if size <= offset {
-				continue
-			}
-
-			// Read new bytes
-			f, err := os.Open(curPath)
-			if err != nil {
-				continue
-			}
-			f.Seek(offset, io.SeekStart)
-			buf := make([]byte, size-offset)
-			n, err := f.Read(buf)
-			f.Close()
+			n, _ := readFile.Read(buf)
 			if n > 0 {
 				encoded := base64.StdEncoding.EncodeToString(buf[:n])
 				fmt.Fprintf(w, "data: %s\n\n", encoded)
@@ -113,37 +127,4 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-}
-
-// sendCatchup reads the last ~4KB of the log file and sends it as a catchup SSE event.
-// Returns the file offset after reading (i.e. end of file).
-func sendCatchup(w http.ResponseWriter, flusher http.Flusher, path string) int64 {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		return 0
-	}
-	size := info.Size()
-
-	const catchupSize = 4096
-	var start int64
-	if size > catchupSize {
-		start = size - catchupSize
-	}
-
-	f.Seek(start, io.SeekStart)
-	buf := make([]byte, size-start)
-	n, _ := f.Read(buf)
-	if n > 0 {
-		encoded := base64.StdEncoding.EncodeToString(buf[:n])
-		fmt.Fprintf(w, "data: %s\n\n", encoded)
-		flusher.Flush()
-	}
-
-	return size
 }

@@ -148,13 +148,6 @@ func (s *Scanner) fetchFromNetman() {
 			name = h.DNSName
 		}
 		if name == "" {
-			// Try reverse DNS lookup
-			names, err := net.LookupAddr(h.IPAddress)
-			if err == nil && len(names) > 0 {
-				name = strings.TrimSuffix(names[0], ".")
-			}
-		}
-		if name == "" {
 			name = h.IPAddress
 		}
 		// Clean up the name - remove domain suffix if present

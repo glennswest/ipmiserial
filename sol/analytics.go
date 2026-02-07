@@ -176,15 +176,15 @@ func (a *Analytics) ProcessText(serverName, text string) {
 
 	// Check for BIOS (boot start)
 	if a.matchesBIOS(text) {
-		log.Infof("BIOS detected for %s, CurrentBoot=%v", serverName, server.CurrentBoot != nil)
+		log.Debugf("BIOS detected for %s, CurrentBoot=%v", serverName, server.CurrentBoot != nil)
 		// If we have a current boot, this is a reboot - archive the old boot
 		if server.CurrentBoot != nil {
 			// Only archive if the boot has been running for more than 30 seconds
 			// This prevents multiple BIOS messages in same boot from creating duplicates
 			elapsed := time.Since(server.CurrentBoot.StartTime)
-			log.Infof("Existing boot elapsed: %v", elapsed)
+			log.Debugf("Existing boot elapsed: %v", elapsed)
 			if elapsed > 30*time.Second {
-				log.Infof("Archiving previous boot for %s (was complete=%v)", serverName, server.CurrentBoot.Complete)
+				log.Debugf("Archiving previous boot for %s (was complete=%v)", serverName, server.CurrentBoot.Complete)
 				server.BootHistory = append(server.BootHistory, *server.CurrentBoot)
 				// Keep only last 10 boots
 				if len(server.BootHistory) > 10 {

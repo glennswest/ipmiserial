@@ -19,12 +19,16 @@ var cursorPosRegex = regexp.MustCompile(`\x1b\[\d+;\d*[Hf]|\x1b\[\d+[Hf]`)
 // ANSI escape code pattern - matches all other escape sequences
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]`)
 
+// Orphaned ANSI fragments — bracket sequences left after ESC byte was stripped
+var orphanedAnsiRegex = regexp.MustCompile(`\[\d*;?\d*[A-Za-z]|\[[\d;?]*[A-Za-z]`)
+
 type Writer struct {
-	basePath       string
-	retentionDays  int
-	files          map[string]*os.File
-	lastRotation   map[string]time.Time // track last rotation time per server
-	mu             sync.Mutex
+	basePath      string
+	retentionDays int
+	files         map[string]*os.File
+	lastRotation  map[string]time.Time // track last rotation time per server
+	pending       map[string][]byte    // partial data buffer per server
+	mu            sync.Mutex
 }
 
 func NewWriter(basePath string, retentionDays int) *Writer {
@@ -33,6 +37,7 @@ func NewWriter(basePath string, retentionDays int) *Writer {
 		retentionDays: retentionDays,
 		files:         make(map[string]*os.File),
 		lastRotation:  make(map[string]time.Time),
+		pending:       make(map[string][]byte),
 	}
 }
 
@@ -45,7 +50,18 @@ func (w *Writer) Write(serverName string, data []byte) error {
 		return err
 	}
 
-	// Clean the data before writing
+	// Prepend any pending data from previous chunk to handle split escape sequences
+	if prev, ok := w.pending[serverName]; ok && len(prev) > 0 {
+		data = append(prev, data...)
+		delete(w.pending, serverName)
+	}
+
+	// If data ends mid-escape sequence, buffer the tail
+	if i := bytes.LastIndexByte(data, '\x1b'); i >= 0 && i > len(data)-10 {
+		w.pending[serverName] = append([]byte{}, data[i:]...)
+		data = data[:i]
+	}
+
 	cleaned := cleanLogData(data)
 	if len(cleaned) == 0 {
 		return nil
@@ -62,6 +78,9 @@ func cleanLogData(data []byte) []byte {
 
 	// Remove other ANSI escape sequences
 	data = ansiRegex.ReplaceAll(data, nil)
+
+	// Remove orphaned ANSI fragments (from previously split sequences)
+	data = orphanedAnsiRegex.ReplaceAll(data, nil)
 
 	// Remove control characters except newline and tab
 	result := make([]byte, 0, len(data))
@@ -201,17 +220,32 @@ func (w *Writer) ListLogs(serverName string) ([]string, error) {
 		return nil, err
 	}
 
-	var logs []string
+	type logEntry struct {
+		name    string
+		modTime time.Time
+	}
+	var logs []logEntry
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".log" && entry.Name() != "current.log" {
-			logs = append(logs, entry.Name())
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			logs = append(logs, logEntry{name: entry.Name(), modTime: info.ModTime()})
 		}
 	}
 
-	// Sort newest first
-	sort.Sort(sort.Reverse(sort.StringSlice(logs)))
+	// Sort newest first by modification time
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].modTime.After(logs[j].modTime)
+	})
 
-	return logs, nil
+	names := make([]string, len(logs))
+	for i, l := range logs {
+		names[i] = l.name
+	}
+
+	return names, nil
 }
 
 func (w *Writer) GetLogPath(serverName, filename string) string {
@@ -255,6 +289,20 @@ func (w *Writer) GetCurrentLogTarget(serverName string) (filename, fullPath stri
 		return "", "", err
 	}
 	return target, filepath.Join(w.basePath, serverName, target), nil
+}
+
+func (w *Writer) ListServerDirs() []string {
+	entries, err := os.ReadDir(w.basePath)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
 }
 
 func (w *Writer) Cleanup() {

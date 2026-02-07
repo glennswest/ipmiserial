@@ -74,7 +74,6 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/version", s.handleVersion).Methods("GET")
 	api.HandleFunc("/servers", s.handleListServers).Methods("GET")
 	api.HandleFunc("/servers/{name}/stream", s.handleStream).Methods("GET")
-	log.Info("Registered route: /api/servers/{name}/stream")
 	api.HandleFunc("/servers/{name}/logs", s.handleListLogs).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/{filename}", s.handleGetLog).Methods("GET")
 	api.HandleFunc("/servers/{name}/logs/{filename}/info", s.handleLogInfo).Methods("GET")
@@ -100,7 +99,7 @@ func (s *Server) setupRoutes() {
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Infof("MIDDLEWARE: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		log.Debugf("%s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -118,8 +117,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.httpServer.Shutdown(context.Background())
 	}()
 
-	log.Infof("Starting web server on port %d", s.port)
-	log.Infof("Routes configured: /api/version, /api/servers, etc.")
+	log.Infof("Web server on port %d", s.port)
 	err := s.httpServer.ListenAndServe()
 	if err == http.ErrServerClosed {
 		log.Info("HTTP server closed cleanly")
