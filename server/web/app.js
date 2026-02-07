@@ -256,6 +256,11 @@ function startServerStream(name) {
         console.log('SSE connected to:', event.data);
     });
 
+    eventSource.addEventListener('logchange', (event) => {
+        const logName = event.data.replace(/\.log$/, '');
+        session.terminal.write(`\r\n\x1b[36m--- New session: ${logName} ---\x1b[0m\r\n`);
+    });
+
     eventSource.onmessage = (event) => {
         const decoded = atob(event.data);
         session.terminal.write(decoded);

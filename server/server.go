@@ -92,9 +92,15 @@ func (s *Server) setupRoutes() {
 	htmx.HandleFunc("/servers/{name}/logs", s.handleLogListHTML).Methods("GET")
 	htmx.HandleFunc("/servers/{name}/logs/{filename}", s.handleLogContentHTML).Methods("GET")
 
-	// Serve embedded web files
+	// Serve embedded web files with no-cache for JS/CSS
 	webContent, _ := fs.Sub(webFS, "web")
-	s.router.PathPrefix("/").Handler(http.FileServer(http.FS(webContent)))
+	fileServer := http.FileServer(http.FS(webContent))
+	s.router.PathPrefix("/").Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".js") || strings.HasSuffix(r.URL.Path, ".css") {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		}
+		fileServer.ServeHTTP(w, r)
+	}))
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

@@ -97,6 +97,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			if curTarget == "" || newTarget != curTarget {
 				if curTarget != "" {
 					log.Infof("handleStream: log rotated for %s: %s -> %s", name, curTarget, newTarget)
+					fmt.Fprintf(w, "event: logchange\ndata: %s\n\n", newTarget)
+					flusher.Flush()
 				}
 				curTarget = newTarget
 				curPath = newPath
