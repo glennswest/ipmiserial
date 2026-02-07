@@ -98,7 +98,7 @@ function renderServerTabs() {
                     <div class="col-md-2">
                         <div class="list-group log-list" id="loglist-${server.name}"
                              hx-get="/htmx/servers/${server.name}/logs"
-                             hx-trigger="load, every 3s, refreshLogs from:body"
+                             hx-trigger="refreshLogList-${server.name} from:body"
                              hx-vals="js:{current: logState['${server.name}']?.filename || ''}"
                              hx-swap="innerHTML">
                         </div>
@@ -311,6 +311,12 @@ function selectServer(name) {
         stopServerStream(currentServer);
     }
 
+    // Stop log polling from previous server
+    if (logPollInterval) {
+        clearInterval(logPollInterval);
+        logPollInterval = null;
+    }
+
     currentServer = name;
 
     // Update tab active states
@@ -335,6 +341,8 @@ function selectServer(name) {
     }
 }
 
+let logPollInterval = null;
+
 function showSubTab(serverName, tab) {
     const subtabs = document.querySelectorAll(`#subtabs-${serverName} .nav-link`);
     subtabs.forEach(t => t.classList.remove('active'));
@@ -346,6 +354,12 @@ function showSubTab(serverName, tab) {
     livePanel.style.display = 'none';
     logsPanel.style.display = 'none';
     analyticsPanel.style.display = 'none';
+
+    // Stop log list polling when leaving logs tab
+    if (logPollInterval) {
+        clearInterval(logPollInterval);
+        logPollInterval = null;
+    }
 
     const session = serverSessions[serverName];
 
@@ -359,6 +373,11 @@ function showSubTab(serverName, tab) {
     } else if (tab === 'logs') {
         subtabs[1].classList.add('active');
         logsPanel.style.display = 'block';
+        // Load log list immediately, then poll every 5s
+        htmx.trigger(document.body, `refreshLogList-${serverName}`);
+        logPollInterval = setInterval(() => {
+            htmx.trigger(document.body, `refreshLogList-${serverName}`);
+        }, 5000);
     } else if (tab === 'analytics') {
         subtabs[2].classList.add('active');
         analyticsPanel.style.display = 'block';
@@ -474,7 +493,7 @@ async function clearServerLogs(serverName) {
         document.getElementById(`log-content-${serverName}`).innerHTML =
             '<div class="text-muted p-3">Select a log file to view...</div>';
         // Trigger htmx refresh
-        htmx.trigger(document.body, 'refreshLogs');
+        htmx.trigger(document.body, `refreshLogList-${serverName}`);
     } catch (error) {
         console.error('Failed to clear logs:', error);
     }
@@ -491,8 +510,10 @@ async function clearAllLogs() {
             document.getElementById(`log-content-${server.name}`).innerHTML =
                 '<div class="text-muted p-3">Select a log file to view...</div>';
         });
-        // Trigger htmx refresh
-        htmx.trigger(document.body, 'refreshLogs');
+        // Trigger htmx refresh for current server
+        if (currentServer) {
+            htmx.trigger(document.body, `refreshLogList-${currentServer}`);
+        }
     } catch (error) {
         console.error('Failed to clear all logs:', error);
     }
