@@ -1,13 +1,17 @@
-# Scratch container - just the static Go binary
-# Build with: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o console-server .
-# Then create minimal container image
+# Multi-stage build for console-server
+FROM golang:1.24-alpine AS builder
 
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o console-server .
+
+# Runtime: minimal scratch image
 FROM scratch
 
-# Copy the pre-built static binary
-COPY console-server /console-server
-
-# Copy config to working directory
+COPY --from=builder /app/console-server /console-server
 COPY config.yaml.example /config.yaml
 
 EXPOSE 80
