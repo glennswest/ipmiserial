@@ -77,18 +77,20 @@ func (w *Writer) Write(serverName string, data []byte) error {
 	}
 
 	// Deduplicate consecutive spinner lines (e.g. BIOS "DHCP..../", "DHCP....-").
-	// Strip trailing whitespace and spinner characters before comparing.
-	if !bytes.Contains(cleaned, []byte("\n")) {
-		trimmed := bytes.TrimRight(cleaned, " \t")
+	// Strip leading newlines (cursor-position escapes become \n in cleaning)
+	// so the dedup check sees the actual content, not the \n prefix.
+	content := bytes.TrimLeft(cleaned, "\n")
+	if len(content) > 0 && !bytes.Contains(content, []byte("\n")) {
+		trimmed := bytes.TrimRight(content, " \t")
 		normalized := bytes.TrimRight(trimmed, "/-\\|.")
 		if last, ok := w.lastLine[serverName]; ok && bytes.Equal(normalized, last) {
 			return nil
 		}
 		w.lastLine[serverName] = append([]byte{}, normalized...)
-	} else {
+	} else if len(content) > 0 {
 		// Multi-line write: track the last line
-		if idx := bytes.LastIndexByte(cleaned, '\n'); idx >= 0 {
-			last := bytes.TrimRight(cleaned[idx+1:], " \t")
+		if idx := bytes.LastIndexByte(content, '\n'); idx >= 0 {
+			last := bytes.TrimRight(content[idx+1:], " \t")
 			last = bytes.TrimRight(last, "/-\\|.")
 			if len(last) > 0 {
 				w.lastLine[serverName] = append([]byte{}, last...)
