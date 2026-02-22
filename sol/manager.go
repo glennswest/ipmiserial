@@ -307,6 +307,9 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 	session.LastError = ""
 	log.Infof("Native SOL connected to %s", session.ServerName)
 
+	// Clear screen for all SSE subscribers so xterm.js starts fresh
+	m.broadcast(session.ServerName, []byte("\x1b[2J\x1b[H"))
+
 	// Read data from SOL and distribute
 	readCh := solSession.Read()
 	errCh := solSession.Err()

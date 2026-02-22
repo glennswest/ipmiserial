@@ -233,6 +233,15 @@ function initServerSession(name) {
         lastLogCount: 0
     };
 
+    // Send keyboard input to SOL session
+    term.onData((data) => {
+        const encoded = btoa(data);
+        fetch(`/api/servers/${encodeURIComponent(name)}/input`, {
+            method: 'POST',
+            body: encoded
+        }).catch(() => {});
+    });
+
     // Fit after a short delay
     setTimeout(() => {
         fit.fit();

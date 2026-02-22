@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -266,6 +268,30 @@ func (s *Server) handleSendCommand(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil || len(body) == 0 {
+		http.Error(w, "empty body", http.StatusBadRequest)
+		return
+	}
+
+	data, err := base64.StdEncoding.DecodeString(string(body))
+	if err != nil {
+		http.Error(w, "invalid base64", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.solManager.SendCommand(name, data); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {

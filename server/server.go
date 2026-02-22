@@ -79,6 +79,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/servers/{name}/logs/{filename}/info", s.handleLogInfo).Methods("GET")
 	api.HandleFunc("/servers/{name}/status", s.handleStatus).Methods("GET")
 	api.HandleFunc("/servers/{name}/command", s.handleSendCommand).Methods("POST")
+	api.HandleFunc("/servers/{name}/input", s.handleInput).Methods("POST")
 	api.HandleFunc("/servers/{name}/logs/clear", s.handleClearLogs).Methods("POST")
 	api.HandleFunc("/servers/{name}/logs/rotate", s.handleRotateLogs).Methods("POST")
 	api.HandleFunc("/logs/clear", s.handleClearAllLogs).Methods("POST")
