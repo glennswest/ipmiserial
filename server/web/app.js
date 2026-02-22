@@ -197,7 +197,7 @@ function createTerminal() {
             brightWhite: '#ffffff'
         },
         scrollback: 10000,
-        convertEol: true,
+        convertEol: false,
         allowProposedApi: true
     });
 
