@@ -11,4 +11,4 @@ require (
 
 require golang.org/x/sys v0.13.0 // indirect
 
-replace github.com/gwest/go-sol => github.com/glennswest/go-sol v0.0.0-20260205172125-7e054e8e59ab
+replace github.com/gwest/go-sol => ../go-sol

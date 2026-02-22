@@ -17,6 +17,8 @@ type Server struct {
 	Hostname string
 	Online   bool
 	MAC      string
+	Username string
+	Password string
 }
 
 // BareMetalHost represents a BMH object from the mkube API
@@ -96,6 +98,10 @@ func (s *Scanner) GetServers() map[string]*Server {
 		result[k] = v
 	}
 	return result
+}
+
+func (s *Scanner) BMHURL() string {
+	return s.bmhURL
 }
 
 func (s *Scanner) Refresh() {
@@ -238,6 +244,14 @@ func (s *Scanner) applyBMH(bmh BareMetalHost) bool {
 			existing.MAC = bmh.Spec.BootMACAddress
 			changed = true
 		}
+		if bmh.Spec.BMC.Username != "" && existing.Username != bmh.Spec.BMC.Username {
+			existing.Username = bmh.Spec.BMC.Username
+			changed = true
+		}
+		if bmh.Spec.BMC.Password != "" && existing.Password != bmh.Spec.BMC.Password {
+			existing.Password = bmh.Spec.BMC.Password
+			changed = true
+		}
 		return changed
 	}
 
@@ -246,6 +260,8 @@ func (s *Scanner) applyBMH(bmh BareMetalHost) bool {
 		Hostname: name,
 		Online:   bmh.Status.PowerOn,
 		MAC:      bmh.Spec.BootMACAddress,
+		Username: bmh.Spec.BMC.Username,
+		Password: bmh.Spec.BMC.Password,
 	}
 	log.Infof("Discovered BMH: %s (%s)", name, addr)
 	return true

@@ -76,11 +76,14 @@ func main() {
 	}
 
 	scanner.OnChange(func(servers map[string]*discovery.Server) {
-		// Start SOL sessions for all discovered servers
 		for name, s := range servers {
-			if solManager.GetSession(name) == nil {
-				log.Infof("Starting SOL session for %s (%s)", name, s.IP)
-				solManager.StartSession(name, s.IP)
+			session := solManager.GetSession(name)
+			if s.Online && session == nil {
+				log.Infof("Starting SOL session for %s (%s) user=%s", name, s.IP, s.Username)
+				solManager.StartSession(name, s.IP, s.Username, s.Password)
+			} else if !s.Online && session != nil {
+				log.Infof("Stopping SOL session for %s (server offline)", name)
+				solManager.StopSession(name)
 			}
 		}
 	})

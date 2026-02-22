@@ -4,7 +4,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REGISTRY="192.168.200.2:5000"
-IMAGE="$REGISTRY/ipmiserial:edge"
 MKUBE_SERVER="http://api.rose1.gt.lo:8082"
 MANIFEST="deploy/ipmiserial.yaml"
 LAST_DEPLOY_FILE=".last-deploy"
@@ -19,15 +18,12 @@ LAST_HASH=$(cat $LAST_DEPLOY_FILE 2>/dev/null | tr -d '\n' || echo "")
 # Check if we need to bump version (changes since last deploy)
 NEEDS_BUMP=false
 if [ -n "$(git status --porcelain)" ]; then
-    # Uncommitted changes
     NEEDS_BUMP=true
 elif [ "$GIT_HASH" != "$LAST_HASH" ] && [ -n "$LAST_HASH" ]; then
-    # New commits since last deploy
     NEEDS_BUMP=true
 fi
 
 if [ "$NEEDS_BUMP" = true ]; then
-    # Bump patch version
     IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
     PATCH=$((PATCH + 1))
     VERSION="${MAJOR}.${MINOR}.${PATCH}"
@@ -36,7 +32,10 @@ if [ "$NEEDS_BUMP" = true ]; then
 fi
 
 FULL_VERSION="${VERSION}+${GIT_HASH}"
-echo "Building version: $FULL_VERSION"
+TAG="v${VERSION}"
+IMAGE="$REGISTRY/ipmiserial:$TAG"
+
+echo "Building version: $FULL_VERSION (tag: $TAG)"
 
 echo "Building container image..."
 podman build --build-arg VERSION="$FULL_VERSION" -t "$IMAGE" .
@@ -47,7 +46,9 @@ podman push --tls-verify=false "$IMAGE"
 echo "Deploying to mkube..."
 oc --server="$MKUBE_SERVER" delete -f "$MANIFEST" 2>/dev/null || true
 sleep 5
-oc --server="$MKUBE_SERVER" apply -f "$MANIFEST"
+
+# Patch manifest with versioned tag to bypass mkube image cache
+sed "s|image: .*ipmiserial:.*|image: $IMAGE|" "$MANIFEST" | oc --server="$MKUBE_SERVER" apply -f -
 
 # Save deployed hash for next comparison
 echo "$GIT_HASH" > $LAST_DEPLOY_FILE

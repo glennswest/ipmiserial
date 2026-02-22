@@ -86,6 +86,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/analytics", s.handleAllAnalytics).Methods("GET")
 	api.HandleFunc("/lookup/mac/{mac}", s.handleMacLookup).Methods("GET")
 	api.HandleFunc("/refresh", s.handleRefresh).Methods("POST")
+	api.HandleFunc("/debug/bmh", s.handleDebugBMH).Methods("GET")
 
 	// HTMX HTML fragment routes
 	htmx := s.router.PathPrefix("/htmx").Subrouter()

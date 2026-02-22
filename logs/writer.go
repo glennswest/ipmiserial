@@ -28,6 +28,8 @@ type Writer struct {
 	files         map[string]*os.File
 	lastRotation  map[string]time.Time // track last rotation time per server
 	pending       map[string][]byte    // partial data buffer per server
+	lastLine      map[string][]byte    // last written line per server (for dedup)
+	trailingNL    map[string]int       // trailing newline count from last write
 	mu            sync.Mutex
 }
 
@@ -38,6 +40,8 @@ func NewWriter(basePath string, retentionDays int) *Writer {
 		files:         make(map[string]*os.File),
 		lastRotation:  make(map[string]time.Time),
 		pending:       make(map[string][]byte),
+		lastLine:      make(map[string][]byte),
+		trailingNL:    make(map[string]int),
 	}
 }
 
@@ -72,6 +76,55 @@ func (w *Writer) Write(serverName string, data []byte) error {
 		return nil
 	}
 
+	// Deduplicate consecutive spinner lines (e.g. BIOS "DHCP..../", "DHCP....-").
+	// Strip trailing whitespace and spinner characters before comparing.
+	if !bytes.Contains(cleaned, []byte("\n")) {
+		trimmed := bytes.TrimRight(cleaned, " \t")
+		normalized := bytes.TrimRight(trimmed, "/-\\|.")
+		if last, ok := w.lastLine[serverName]; ok && bytes.Equal(normalized, last) {
+			return nil
+		}
+		w.lastLine[serverName] = append([]byte{}, normalized...)
+	} else {
+		// Multi-line write: track the last line
+		if idx := bytes.LastIndexByte(cleaned, '\n'); idx >= 0 {
+			last := bytes.TrimRight(cleaned[idx+1:], " \t")
+			last = bytes.TrimRight(last, "/-\\|.")
+			if len(last) > 0 {
+				w.lastLine[serverName] = append([]byte{}, last...)
+			}
+		}
+	}
+
+	// Prevent runs of blank lines across write boundaries.
+	// Allow at most 2 consecutive newlines (1 blank line) in the file.
+	prevNL := w.trailingNL[serverName]
+	if prevNL > 0 {
+		leadingNL := 0
+		for leadingNL < len(cleaned) && cleaned[leadingNL] == '\n' {
+			leadingNL++
+		}
+		// Total consecutive newlines = trailing from last write + leading in this write.
+		// Cap at 2 (one blank line).
+		if total := prevNL + leadingNL; total > 2 {
+			trim := total - 2
+			if trim > leadingNL {
+				trim = leadingNL
+			}
+			cleaned = cleaned[trim:]
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+
+	// Track trailing newlines for next write
+	trailNL := 0
+	for i := len(cleaned) - 1; i >= 0 && cleaned[i] == '\n'; i-- {
+		trailNL++
+	}
+	w.trailingNL[serverName] = trailNL
+
 	_, err = f.Write(cleaned)
 	return err
 }
@@ -87,6 +140,21 @@ func cleanLogData(data []byte) []byte {
 	// Remove orphaned ANSI fragments (from previously split sequences)
 	data = orphanedAnsiRegex.ReplaceAll(data, nil)
 
+	// Handle carriage returns: simulate terminal overwrite behavior.
+	// First normalize \r\n line endings to \n (standard SOL line terminator),
+	// then within each line, content after \r replaces content before it.
+	// e.g. "foo\rbar" → "bar" (BIOS spinner frames)
+	if bytes.ContainsRune(data, '\r') {
+		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+		crLines := bytes.Split(data, []byte("\n"))
+		for i, line := range crLines {
+			if idx := bytes.LastIndexByte(line, '\r'); idx >= 0 {
+				crLines[i] = line[idx+1:]
+			}
+		}
+		data = bytes.Join(crLines, []byte("\n"))
+	}
+
 	// Remove control characters except newline and tab
 	result := make([]byte, 0, len(data))
 	for _, c := range data {
@@ -94,9 +162,6 @@ func cleanLogData(data []byte) []byte {
 			result = append(result, c)
 		}
 	}
-
-	// Remove carriage returns
-	result = bytes.ReplaceAll(result, []byte{'\r'}, nil)
 
 	// Trim trailing whitespace from each line
 	lines := bytes.Split(result, []byte("\n"))

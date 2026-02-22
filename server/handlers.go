@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -202,7 +203,7 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 		// Look up IP from scanner
 		servers := s.scanner.GetServers()
 		if srv, exists := servers[name]; exists {
-			s.solManager.StartSession(name, srv.IP)
+			s.solManager.StartSession(name, srv.IP, srv.Username, srv.Password)
 		}
 	}
 
@@ -590,4 +591,40 @@ func formatDuration(seconds float64) string {
 	hours := int(seconds) / 3600
 	mins := (int(seconds) % 3600) / 60
 	return fmt.Sprintf("%dh %dm", hours, mins)
+}
+
+func (s *Server) handleDebugBMH(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	bmhURL := s.scanner.BMHURL()
+	url := bmhURL + "/api/v1/baremetalhosts"
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Test gateway connectivity
+	gwErr := ""
+	gwConn, err := net.DialTimeout("tcp", "192.168.11.1:80", 3*time.Second)
+	if err != nil {
+		gwErr = err.Error()
+	} else {
+		gwConn.Close()
+	}
+
+	// Test BMH API
+	bmhErr := ""
+	bmhStatus := 0
+	resp, err := client.Get(url)
+	if err != nil {
+		bmhErr = err.Error()
+	} else {
+		bmhStatus = resp.StatusCode
+		resp.Body.Close()
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"bmh_url":        bmhURL,
+		"fetch_url":      url,
+		"bmh_status":     bmhStatus,
+		"bmh_error":      bmhErr,
+		"gateway_test":   "192.168.11.1:80",
+		"gateway_error":  gwErr,
+	})
 }
