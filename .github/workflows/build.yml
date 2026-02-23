@@ -20,6 +20,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n')
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "full=${VERSION}+${GIT_HASH}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION}+${GIT_HASH}"
+
+      - name: Cross-compile binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.full }}" \
+            -o ipmiserial .
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -53,7 +73,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
