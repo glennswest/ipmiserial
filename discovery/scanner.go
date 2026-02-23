@@ -56,15 +56,25 @@ type Scanner struct {
 	mu         sync.RWMutex
 	onChange   func(servers map[string]*Server)
 	bmhURL     string
+	namespace  string
 	httpClient *http.Client
 }
 
-func NewScanner(bmhURL string) *Scanner {
+func NewScanner(bmhURL, namespace string) *Scanner {
 	return &Scanner{
 		servers:    make(map[string]*Server),
 		bmhURL:     bmhURL,
+		namespace:  namespace,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+// bmhListURL returns the URL for listing BMH objects, scoped by namespace if configured.
+func (s *Scanner) bmhListURL() string {
+	if s.namespace != "" {
+		return s.bmhURL + "/api/v1/namespaces/" + s.namespace + "/baremetalhosts"
+	}
+	return s.bmhURL + "/api/v1/baremetalhosts"
 }
 
 func (s *Scanner) AddServer(name, host string) {
@@ -140,7 +150,7 @@ func (s *Scanner) fetchBMH() {
 		return
 	}
 
-	resp, err := s.httpClient.Get(s.bmhURL + "/api/v1/baremetalhosts")
+	resp, err := s.httpClient.Get(s.bmhListURL())
 	if err != nil {
 		log.Warnf("Failed to fetch BMH list: %v", err)
 		return
@@ -172,7 +182,7 @@ func (s *Scanner) watchBMH(ctx context.Context) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", s.bmhURL+"/api/v1/baremetalhosts?watch=true", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", s.bmhListURL()+"?watch=true", nil)
 	if err != nil {
 		log.Warnf("Failed to create BMH watch request: %v", err)
 		return

@@ -28,7 +28,8 @@ type IPMIConfig struct {
 }
 
 type DiscoveryConfig struct {
-	BMHURL string `yaml:"bmh_url"`
+	BMHURL    string `yaml:"bmh_url"`
+	Namespace string `yaml:"namespace"` // filter BMH by namespace (e.g. "g11")
 }
 
 type RebootDetectionConfig struct {

@@ -44,7 +44,7 @@ func main() {
 	}
 
 	log.Infof("Starting Console Server v%s", Version)
-	log.Infof("  BMH API: %s", cfg.Discovery.BMHURL)
+	log.Infof("  BMH API: %s (namespace: %s)", cfg.Discovery.BMHURL, cfg.Discovery.Namespace)
 	log.Infof("  Log path: %s", cfg.Logs.Path)
 	log.Infof("  Web port: %d", cfg.Server.Port)
 
@@ -68,7 +68,7 @@ func main() {
 
 	solManager := sol.NewManager(cfg.IPMI.Username, cfg.IPMI.Password, logWriter, rebootDetector, cfg.Logs.Path)
 
-	scanner := discovery.NewScanner(cfg.Discovery.BMHURL)
+	scanner := discovery.NewScanner(cfg.Discovery.BMHURL, cfg.Discovery.Namespace)
 
 	// Add any statically configured servers (optional override)
 	for _, s := range cfg.Servers {

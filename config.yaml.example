@@ -6,6 +6,7 @@ servers: []
 
 discovery:
   bmh_url: "http://192.168.200.2:8082"
+  namespace: "g11"  # filter BMH by namespace (empty = all namespaces)
 
 reboot_detection:
   sol_patterns:
