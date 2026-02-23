@@ -3,55 +3,38 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REGISTRY="192.168.200.2:5000"
-MKUBE_SERVER="http://api.rose1.gt.lo:8082"
-MANIFEST="deploy/ipmiserial.yaml"
-LAST_DEPLOY_FILE=".last-deploy"
-
 cd "$SCRIPT_DIR"
 
-# Get current version and git info
+REGISTRY="192.168.200.2:5000"
+MKUBE_API="http://192.168.200.2:8082"
+IMAGE="$REGISTRY/ipmiserial:edge"
+
 VERSION=$(cat VERSION 2>/dev/null | tr -d '\n' || echo "0.0.0")
 GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-LAST_HASH=$(cat $LAST_DEPLOY_FILE 2>/dev/null | tr -d '\n' || echo "")
-
-# Check if we need to bump version (changes since last deploy)
-NEEDS_BUMP=false
-if [ -n "$(git status --porcelain)" ]; then
-    NEEDS_BUMP=true
-elif [ "$GIT_HASH" != "$LAST_HASH" ] && [ -n "$LAST_HASH" ]; then
-    NEEDS_BUMP=true
-fi
-
-if [ "$NEEDS_BUMP" = true ]; then
-    IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-    PATCH=$((PATCH + 1))
-    VERSION="${MAJOR}.${MINOR}.${PATCH}"
-    echo "$VERSION" > VERSION
-    echo "Bumped version to $VERSION"
-fi
-
 FULL_VERSION="${VERSION}+${GIT_HASH}"
-TAG="v${VERSION}"
-IMAGE="$REGISTRY/ipmiserial:$TAG"
 
-echo "Building version: $FULL_VERSION (tag: $TAG)"
+echo "=== Deploying ipmiserial ${FULL_VERSION} ==="
 
+# Cross-compile binary locally for ARM64 Linux
+echo "Building binary for arm64..."
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor \
+  -ldflags="-s -w -X main.Version=${FULL_VERSION}" \
+  -o ipmiserial .
+
+# Build scratch container image with podman
 echo "Building container image..."
-podman build --build-arg VERSION="$FULL_VERSION" -t "$IMAGE" .
+podman build --platform linux/arm64 -t "$IMAGE" .
 
+# Clean up local binary
+rm -f ipmiserial
+
+# Push to local registry (mkube will push to GHCR)
 echo "Pushing to $REGISTRY..."
 podman push --tls-verify=false "$IMAGE"
 
-echo "Deploying to mkube..."
-oc --server="$MKUBE_SERVER" delete -f "$MANIFEST" 2>/dev/null || true
-sleep 5
-
-# Patch manifest with versioned tag to bypass mkube image cache
-sed "s|image: .*ipmiserial:.*|image: $IMAGE|" "$MANIFEST" | oc --server="$MKUBE_SERVER" apply -f -
-
-# Save deployed hash for next comparison
-echo "$GIT_HASH" > $LAST_DEPLOY_FILE
+# Trigger mkube registry poll to update the container
+echo "Triggering registry update..."
+curl -s -X POST "$MKUBE_API/api/v1/registry/poll"
 
 echo ""
 echo "=== Done ==="

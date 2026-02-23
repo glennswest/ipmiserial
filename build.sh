@@ -1,27 +1,32 @@
 #!/bin/bash
+# Build ipmiserial binary and container image locally
 set -e
 
-BINARY_NAME="ipmiserial"
-IMAGE_NAME="ipmiserial"
-TAR_NAME="${IMAGE_NAME}.tar"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-echo "=== Building ipmiserial ==="
+IMAGE="ipmiserial:latest"
 
-# Build the Go binary for arm64
+VERSION=$(cat VERSION 2>/dev/null | tr -d '\n' || echo "0.0.0")
+GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+FULL_VERSION="${VERSION}+${GIT_HASH}"
+
+echo "=== Building ipmiserial ${FULL_VERSION} ==="
+
+# Cross-compile binary locally for ARM64 Linux
 echo "Building binary for arm64..."
-GOOS=linux GOARCH=arm64 go build -o ${BINARY_NAME} .
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor \
+  -ldflags="-s -w -X main.Version=${FULL_VERSION}" \
+  -o ipmiserial .
 
-# Build the container image
+# Build scratch container image with podman
 echo "Building container image..."
-podman build --platform linux/arm64 -t ${IMAGE_NAME}:latest .
+podman build --platform linux/arm64 -t "$IMAGE" .
 
-# Save as tarball
-echo "Saving image as tarball..."
-podman save ${IMAGE_NAME}:latest -o ${TAR_NAME}
-
-# Cleanup binary (it's in the image now)
-rm -f ${BINARY_NAME}
+# Clean up local binary
+rm -f ipmiserial
 
 echo ""
-echo "Build complete: ${TAR_NAME}"
-echo "Run ./deploy.sh to deploy to rose1"
+echo "=== Build complete ==="
+echo "Image: $IMAGE"
+echo "Run ./deploy.sh to push and deploy to rose1"
