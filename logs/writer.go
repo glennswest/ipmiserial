@@ -25,22 +25,28 @@ var orphanedAnsiRegex = regexp.MustCompile(`\[[=?]?[\d;]*[A-Za-z]|\[[=?]?[\d;]+$
 var orphanedAnsiLineRegex = regexp.MustCompile(`(?m)\[[=?]?[\d;]+$`)
 
 // repeatTracker detects repeating multi-line blocks.
-// Stores the last N non-empty lines; when a new line matches the line
-// from blockLen lines ago for 3 full cycles, we suppress further copies.
+// First copy is always written. On detecting a repeat, suppresses further
+// copies and tracks count. When the pattern breaks (or on flush), emits
+// "(Duplicated N times)" to the log.
 type repeatTracker struct {
 	ring     []string // circular buffer of recent lines
 	pos      int      // next write position
 	blockLen int      // detected repeating block length (0 = no repeat)
-	count    int      // lines matched in the repeating pattern
+	dupCount int      // number of suppressed repetitions
 	suppress bool     // currently suppressing output
 }
 
-const repeatRingSize = 64 // must hold at least 3x max block length
+const repeatRingSize = 64
 
 func newRepeatTracker() *repeatTracker {
 	return &repeatTracker{
 		ring: make([]string, repeatRingSize),
 	}
+}
+
+// DupCount returns the current suppressed repetition count (for live display).
+func (rt *repeatTracker) DupCount() int {
+	return rt.dupCount
 }
 
 // checkLine returns true if this line should be written, false if suppressed.
@@ -59,36 +65,35 @@ func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
 		// Check if we're still in the same repeating block
 		idx := (rt.pos - 1 - rt.blockLen + repeatRingSize*2) % repeatRingSize
 		if rt.ring[idx] == line {
-			rt.count++
+			// Count full block repetitions
+			rt.dupCount++
 			return false, ""
 		}
-		// Pattern broken — emit summary and resume
-		reps := rt.count / rt.blockLen
+		// Pattern broken — emit final count and resume
+		reps := rt.dupCount / rt.blockLen
 		rt.suppress = false
 		rt.blockLen = 0
-		rt.count = 0
+		rt.dupCount = 0
 		if reps > 0 {
-			banner = fmt.Sprintf("\n[... repeated %d more times ...]\n", reps)
+			banner = fmt.Sprintf("\n(Duplicated %d times)\n", reps)
 		}
 		return true, banner
 	}
 
-	// Try to detect a repeat: need 3 full copies in the ring (write 2, suppress from 3rd)
-	for bl := 3; bl <= repeatRingSize/3; bl++ {
+	// Detect repeat: need 2 identical consecutive blocks (first copy already written)
+	for bl := 3; bl <= repeatRingSize/2; bl++ {
 		match := true
-		// Check that 3 consecutive blocks of length bl are identical
 		for i := 0; i < bl; i++ {
 			a := (rt.pos - 1 - i + repeatRingSize*2) % repeatRingSize
 			b := (rt.pos - 1 - i - bl + repeatRingSize*2) % repeatRingSize
-			c := (rt.pos - 1 - i - 2*bl + repeatRingSize*2) % repeatRingSize
-			if rt.ring[a] == "" || rt.ring[a] != rt.ring[b] || rt.ring[b] != rt.ring[c] {
+			if rt.ring[a] == "" || rt.ring[a] != rt.ring[b] {
 				match = false
 				break
 			}
 		}
 		if match {
 			rt.blockLen = bl
-			rt.count = 0
+			rt.dupCount = bl // this second copy is the first dup
 			rt.suppress = true
 			return false, ""
 		}
@@ -538,6 +543,16 @@ func (w *Writer) Cleanup() {
 			}
 		}
 	}
+}
+
+// GetDupCount returns the current duplicate count for a server's repeat tracker.
+func (w *Writer) GetDupCount(serverName string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if rt, ok := w.repeats[serverName]; ok {
+		return rt.DupCount() / max(rt.blockLen, 1)
+	}
+	return 0
 }
 
 func (w *Writer) Close() {

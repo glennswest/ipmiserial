@@ -271,6 +271,17 @@ function startServerStream(name) {
         session.terminal.write(`\r\n\x1b[36m--- New session: ${logName} ---\x1b[0m\r\n`);
     });
 
+    eventSource.addEventListener('dedup', (event) => {
+        const count = parseInt(event.data, 10);
+        if (count > 0) {
+            // Overwrite current line with dup count using carriage return
+            session.terminal.write(`\r\x1b[2K\x1b[33m(Duplicated ${count} times)\x1b[0m`);
+        } else {
+            // Dedup ended, clear the line
+            session.terminal.write(`\r\x1b[2K`);
+        }
+    });
+
     eventSource.onmessage = (event) => {
         const decoded = atob(event.data);
         session.terminal.write(decoded);

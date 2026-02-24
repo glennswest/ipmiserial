@@ -75,6 +75,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	ch := s.solManager.Subscribe(name)
 	defer s.solManager.Unsubscribe(name, ch)
 
+	lastDupCount := 0
+
 	for {
 		select {
 		case <-r.Context().Done():
@@ -90,6 +92,19 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 			encoded := base64.StdEncoding.EncodeToString(data)
 			fmt.Fprintf(w, "data: %s\n\n", encoded)
+
+			// Send dedup count if it changed
+			dupCount := s.logWriter.GetDupCount(name)
+			if dupCount != lastDupCount {
+				if dupCount > 0 {
+					fmt.Fprintf(w, "event: dedup\ndata: %d\n\n", dupCount)
+				} else if lastDupCount > 0 {
+					// Dedup ended
+					fmt.Fprintf(w, "event: dedup\ndata: 0\n\n")
+				}
+				lastDupCount = dupCount
+			}
+
 			flusher.Flush()
 		}
 	}
