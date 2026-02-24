@@ -16,14 +16,15 @@ import (
 )
 
 type Session struct {
-	ServerName  string
-	IP          string
-	Username    string
-	Password    string
-	Connected   bool
-	LastError   string
-	cancel     context.CancelFunc
-	solSession *sol.Session
+	ServerName   string
+	IP           string
+	Username     string
+	Password     string
+	Connected    bool
+	LastError    string
+	LastActivity time.Time
+	cancel       context.CancelFunc
+	solSession   *sol.Session
 }
 
 type Manager struct {
@@ -46,7 +47,7 @@ type LogWriter interface {
 }
 
 func NewManager(username, password string, logWriter LogWriter, rebootDetector *RebootDetector, dataPath string) *Manager {
-	return &Manager{
+	m := &Manager{
 		username:       username,
 		password:       password,
 		logPath:        dataPath,
@@ -56,6 +57,8 @@ func NewManager(username, password string, logWriter LogWriter, rebootDetector *
 		analytics:      NewAnalytics(dataPath),
 		subscribers:    make(map[string][]chan []byte),
 	}
+	go m.healthCheck()
+	return m
 }
 
 func (m *Manager) GetAnalytics(serverName string) *ServerAnalytics {
@@ -201,6 +204,42 @@ func (m *Manager) broadcast(serverName string, data []byte) {
 	}
 }
 
+// healthCheck periodically inspects all connected sessions for staleness.
+// If a session is marked Connected but has no recent activity, it forces a reconnect.
+func (m *Manager) healthCheck() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	const staleThreshold = 90 * time.Second
+
+	for range ticker.C {
+		m.mu.RLock()
+		var stale []string
+		for name, session := range m.sessions {
+			if !session.Connected {
+				continue
+			}
+			if session.solSession == nil {
+				log.Warnf("Health check: %s marked connected but solSession is nil, will restart", name)
+				stale = append(stale, name)
+				continue
+			}
+			idle := time.Since(session.LastActivity)
+			if idle > staleThreshold {
+				log.Warnf("Health check: %s idle for %v (threshold %v), will restart", name, idle.Round(time.Second), staleThreshold)
+				stale = append(stale, name)
+				continue
+			}
+			log.Debugf("Health check: %s ok (idle %v)", name, idle.Round(time.Second))
+		}
+		m.mu.RUnlock()
+
+		for _, name := range stale {
+			m.RestartSession(name)
+		}
+	}
+}
+
 func (m *Manager) runSession(ctx context.Context, session *Session) {
 	backoff := time.Second
 
@@ -307,7 +346,7 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 		Username:          session.Username,
 		Password:          session.Password,
 		Timeout:           30 * time.Second,
-		InactivityTimeout: 5 * time.Minute,
+		InactivityTimeout: 2 * time.Minute,
 		Logf: func(format string, args ...interface{}) {
 			log.Debugf("[go-sol] "+format, args...)
 		},
@@ -325,6 +364,7 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 	session.solSession = solSession
 	session.Connected = true
 	session.LastError = ""
+	session.LastActivity = time.Now()
 	log.Infof("Native SOL connected to %s", session.ServerName)
 
 	// Clear screen for all SSE subscribers so xterm.js starts fresh
@@ -353,6 +393,8 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 				session.Connected = false
 				return fmt.Errorf("SOL session closed")
 			}
+
+			session.LastActivity = time.Now()
 
 			// Broadcast raw data to SSE subscribers
 			m.broadcast(session.ServerName, data)

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 // Major (x.0.0): Breaking changes, major rewrites
 // Minor (0.y.0): New features, significant enhancements
 // Patch (0.0.z): Bug fixes, minor improvements
-var Version = "1.3.0"
+var Version = "2.1.0"
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
@@ -68,7 +69,8 @@ func main() {
 
 	solManager := sol.NewManager(cfg.IPMI.Username, cfg.IPMI.Password, logWriter, rebootDetector, cfg.Logs.Path)
 
-	scanner := discovery.NewScanner(cfg.Discovery.BMHURL, cfg.Discovery.Namespace)
+	dataDir := filepath.Dir(cfg.Logs.Path) // e.g. /var/lib/data from /var/lib/data/logs
+	scanner := discovery.NewScanner(cfg.Discovery.BMHURL, cfg.Discovery.Namespace, dataDir)
 
 	// Add any statically configured servers (optional override)
 	for _, s := range cfg.Servers {
@@ -84,6 +86,13 @@ func main() {
 			} else if !s.Online && session != nil {
 				log.Infof("Stopping SOL session for %s (server offline)", name)
 				solManager.StopSession(name)
+			} else if s.Online && session != nil {
+				// Detect credential changes and restart session
+				if session.Username != s.Username || session.Password != s.Password {
+					log.Infof("Credentials changed for %s, restarting SOL session", name)
+					solManager.StopSession(name)
+					solManager.StartSession(name, s.IP, s.Username, s.Password)
+				}
 			}
 		}
 	})

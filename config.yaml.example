@@ -1,7 +1,3 @@
-ipmi:
-  username: ADMIN    # Example only - change to your credentials
-  password: ADMIN    # Example only - change to your credentials
-
 servers: []
 
 discovery:

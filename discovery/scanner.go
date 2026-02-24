@@ -13,12 +13,12 @@ import (
 )
 
 type Server struct {
-	IP       string
-	Hostname string
-	Online   bool
-	MAC      string
-	Username string
-	Password string
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+	Online   bool   `json:"online"`
+	MAC      string `json:"mac,omitempty"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // BareMetalHost represents a BMH object from the mkube API
@@ -58,14 +58,16 @@ type Scanner struct {
 	bmhURL     string
 	namespace  string
 	httpClient *http.Client
+	cache      *Cache
 }
 
-func NewScanner(bmhURL, namespace string) *Scanner {
+func NewScanner(bmhURL, namespace, dataDir string) *Scanner {
 	return &Scanner{
 		servers:    make(map[string]*Server),
 		bmhURL:     bmhURL,
 		namespace:  namespace,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
+		cache:      NewCache(dataDir),
 	}
 }
 
@@ -119,7 +121,21 @@ func (s *Scanner) Refresh() {
 }
 
 func (s *Scanner) Run(ctx context.Context) {
-	// Initial list
+	// Load from cache first for immediate availability
+	if cached := s.cache.Load(); len(cached) > 0 {
+		s.mu.Lock()
+		for name, srv := range cached {
+			if _, exists := s.servers[name]; !exists {
+				s.servers[name] = srv
+			}
+		}
+		s.mu.Unlock()
+		if s.onChange != nil {
+			s.onChange(s.GetServers())
+		}
+	}
+
+	// Fetch live data (updates cache)
 	s.fetchBMH()
 
 	if s.onChange != nil {
@@ -172,8 +188,11 @@ func (s *Scanner) fetchBMH() {
 	}
 	s.mu.Unlock()
 
-	if hasNew && s.onChange != nil {
-		go s.onChange(s.GetServers())
+	if hasNew {
+		s.cache.Save(s.GetServers())
+		if s.onChange != nil {
+			go s.onChange(s.GetServers())
+		}
 	}
 }
 
@@ -227,8 +246,11 @@ func (s *Scanner) watchBMH(ctx context.Context) {
 		}
 		s.mu.Unlock()
 
-		if changed && s.onChange != nil {
-			go s.onChange(s.GetServers())
+		if changed {
+			s.cache.Save(s.GetServers())
+			if s.onChange != nil {
+				go s.onChange(s.GetServers())
+			}
 		}
 	}
 }
