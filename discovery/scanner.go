@@ -268,8 +268,9 @@ func (s *Scanner) applyBMH(bmh BareMetalHost) bool {
 	existing, exists := s.servers[name]
 	if exists {
 		changed := false
-		if existing.Online != bmh.Status.PowerOn {
-			existing.Online = bmh.Status.PowerOn
+		// BMC is always reachable regardless of host power state
+		if !existing.Online {
+			existing.Online = true
 			changed = true
 		}
 		if bmh.Spec.BootMACAddress != "" && existing.MAC != bmh.Spec.BootMACAddress {
@@ -290,7 +291,7 @@ func (s *Scanner) applyBMH(bmh BareMetalHost) bool {
 	s.servers[name] = &Server{
 		IP:       addr,
 		Hostname: name,
-		Online:   bmh.Status.PowerOn,
+		Online:   true,
 		MAC:      bmh.Spec.BootMACAddress,
 		Username: bmh.Spec.BMC.Username,
 		Password: bmh.Spec.BMC.Password,
