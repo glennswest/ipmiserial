@@ -20,7 +20,9 @@ var cursorPosRegex = regexp.MustCompile(`\x1b\[\d+;\d*[Hf]|\x1b\[\d+[Hf]`)
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]`)
 
 // Orphaned ANSI fragments — bracket sequences left after ESC byte was stripped
-var orphanedAnsiRegex = regexp.MustCompile(`\[\d*;?\d*[A-Za-z]|\[[\d;?]*[A-Za-z]`)
+// Matches: [=3h [0m [01;00H [?25l etc. Also catches incomplete [01;01 (no letter)
+var orphanedAnsiRegex = regexp.MustCompile(`\[[=?]?[\d;]*[A-Za-z]|\[[=?]?[\d;]+$`)
+var orphanedAnsiLineRegex = regexp.MustCompile(`(?m)\[[=?]?[\d;]+$`)
 
 // repeatTracker detects repeating multi-line blocks.
 // Stores the last N non-empty lines; when a new line matches the line
@@ -246,6 +248,7 @@ func cleanLogData(data []byte) []byte {
 
 	// Remove orphaned ANSI fragments (from previously split sequences)
 	data = orphanedAnsiRegex.ReplaceAll(data, nil)
+	data = orphanedAnsiLineRegex.ReplaceAll(data, nil)
 
 	// Handle carriage returns: simulate terminal overwrite behavior.
 	// First normalize \r\n line endings to \n (standard SOL line terminator),
