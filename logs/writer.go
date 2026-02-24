@@ -37,7 +37,7 @@ type recentLines struct {
 func newRecentLines() *recentLines {
 	return &recentLines{
 		lines:    make(map[string]struct{}),
-		maxLines: 200,
+		maxLines: 25,
 	}
 }
 
