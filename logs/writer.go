@@ -24,86 +24,57 @@ var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x
 var orphanedAnsiRegex = regexp.MustCompile(`\[[=?]?[\d;]*[A-Za-z]|\[[=?]?[\d;]+$`)
 var orphanedAnsiLineRegex = regexp.MustCompile(`(?m)\[[=?]?[\d;]+$`)
 
-// repeatTracker detects repeating multi-line blocks.
-// First copy is always written. On detecting a repeat, suppresses further
-// copies and tracks count. When the pattern breaks (or on flush), emits
-// "(Duplicated N times)" to the log.
-type repeatTracker struct {
-	ring     []string // circular buffer of recent lines
-	pos      int      // next write position
-	blockLen int      // detected repeating block length (0 = no repeat)
-	dupCount int      // number of suppressed repetitions
-	suppress bool     // currently suppressing output
+// recentLines tracks recently written lines to suppress screen-redraw duplicates.
+// The BMC redraws the screen via cursor positioning; after cleaning, these become
+// duplicate lines. We keep a set of recent lines and skip any line already seen.
+type recentLines struct {
+	lines    map[string]struct{} // set of recent line content
+	order    []string            // insertion order for eviction
+	maxLines int                 // max lines to remember
+	dupCount int                 // consecutive suppressed lines
 }
 
-const repeatRingSize = 64
-
-func newRepeatTracker() *repeatTracker {
-	return &repeatTracker{
-		ring: make([]string, repeatRingSize),
+func newRecentLines() *recentLines {
+	return &recentLines{
+		lines:    make(map[string]struct{}),
+		maxLines: 200,
 	}
 }
 
-// DupCount returns the current suppressed repetition count (for live display).
-func (rt *repeatTracker) DupCount() int {
-	return rt.dupCount
+func (rl *recentLines) DupCount() int {
+	return rl.dupCount
 }
 
-// checkLine returns true if this line should be written, false if suppressed.
-func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
+// checkLine returns true if this line is new and should be written.
+func (rl *recentLines) checkLine(line string) (write bool, banner string) {
 	trimmed := bytes.TrimRight([]byte(line), " \t")
 	line = string(trimmed)
 	if line == "" {
 		return true, ""
 	}
 
-	// Store line in ring
-	rt.ring[rt.pos] = line
-	rt.pos = (rt.pos + 1) % repeatRingSize
-
-	if rt.suppress {
-		// Check if we're still in the same repeating block
-		idx := (rt.pos - 1 - rt.blockLen + repeatRingSize*2) % repeatRingSize
-		if rt.ring[idx] == line {
-			// Count full block repetitions
-			rt.dupCount++
-			return false, ""
-		}
-		// Pattern broken — emit final count and resume
-		reps := rt.dupCount / rt.blockLen
-		rt.suppress = false
-		rt.blockLen = 0
-		rt.dupCount = 0
-		if reps > 0 {
-			banner = fmt.Sprintf("\n(Duplicated %d times)\n", reps)
-		}
-		return true, banner
+	if _, exists := rl.lines[line]; exists {
+		rl.dupCount++
+		return false, ""
 	}
 
-	// Detect repeat: need 2 identical consecutive blocks (first copy already written)
-	// Min block size 4 to avoid false positives on interleaved screen redraws
-	for bl := 4; bl <= repeatRingSize/2; bl++ {
-		match := true
-		totalLen := 0
-		for i := 0; i < bl; i++ {
-			a := (rt.pos - 1 - i + repeatRingSize*2) % repeatRingSize
-			b := (rt.pos - 1 - i - bl + repeatRingSize*2) % repeatRingSize
-			if rt.ring[a] == "" || rt.ring[a] != rt.ring[b] {
-				match = false
-				break
-			}
-			totalLen += len(rt.ring[a])
-		}
-		// Require substantial content to avoid false positives on short fragments
-		if match && totalLen >= 40 {
-			rt.blockLen = bl
-			rt.dupCount = bl
-			rt.suppress = true
-			return false, ""
-		}
+	// New line — emit dup count if we were suppressing
+	if rl.dupCount > 0 {
+		banner = fmt.Sprintf("(Duplicated %d lines)\n", rl.dupCount)
+		rl.dupCount = 0
 	}
 
-	return true, ""
+	// Add to recent set
+	rl.lines[line] = struct{}{}
+	rl.order = append(rl.order, line)
+
+	// Evict oldest when full
+	for len(rl.order) > rl.maxLines {
+		delete(rl.lines, rl.order[0])
+		rl.order = rl.order[1:]
+	}
+
+	return true, banner
 }
 
 type Writer struct {
@@ -114,7 +85,7 @@ type Writer struct {
 	pending       map[string][]byte       // partial data buffer per server
 	lastLine      map[string][]byte       // last written line per server (for dedup)
 	trailingNL    map[string]int          // trailing newline count from last write
-	repeats       map[string]*repeatTracker // multi-line block dedup per server
+	repeats       map[string]*recentLines // line-level dedup per server
 	mu            sync.Mutex
 }
 
@@ -127,7 +98,7 @@ func NewWriter(basePath string, retentionDays int) *Writer {
 		pending:       make(map[string][]byte),
 		lastLine:      make(map[string][]byte),
 		trailingNL:    make(map[string]int),
-		repeats:       make(map[string]*repeatTracker),
+		repeats:       make(map[string]*recentLines),
 	}
 }
 
@@ -209,7 +180,7 @@ func (w *Writer) Write(serverName string, data []byte) error {
 	// Multi-line block dedup: detect repeating blocks (e.g. PXE boot loops)
 	rt := w.repeats[serverName]
 	if rt == nil {
-		rt = newRepeatTracker()
+		rt = newRecentLines()
 		w.repeats[serverName] = rt
 	}
 
@@ -549,12 +520,12 @@ func (w *Writer) Cleanup() {
 	}
 }
 
-// GetDupCount returns the current duplicate count for a server's repeat tracker.
+// GetDupCount returns the current duplicate line count for a server.
 func (w *Writer) GetDupCount(serverName string) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if rt, ok := w.repeats[serverName]; ok {
-		return rt.DupCount() / max(rt.blockLen, 1)
+		return rt.DupCount()
 	}
 	return 0
 }
