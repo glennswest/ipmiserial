@@ -21,3 +21,6 @@
 - Previous release
 
 ## [Unreleased]
+
+### 2026-02-23
+- **feat:** Power-on delay tracking: measures time from log rotation to first console output, displayed in analytics HTML and JSON API

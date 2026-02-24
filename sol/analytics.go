@@ -27,7 +27,9 @@ type NetworkStats struct {
 type BootEvent struct {
 	StartTime     time.Time      `json:"startTime"`
 	EndTime       time.Time      `json:"endTime,omitempty"`
-	BootDuration  float64        `json:"bootDuration,omitempty"` // seconds
+	BootDuration  float64        `json:"bootDuration,omitempty"`    // seconds
+	PowerOnDelay  float64        `json:"powerOnDelay,omitempty"`    // seconds from rotation to first console output
+	RotationTime  *time.Time     `json:"rotationTime,omitempty"`   // when log rotation triggered this boot
 	Complete      bool           `json:"complete"`
 	DetectedOS    string         `json:"detectedOS,omitempty"`
 	NetworkEvents []NetworkEvent `json:"networkEvents,omitempty"`
@@ -43,6 +45,11 @@ type ServerAnalytics struct {
 	TotalReboots  int          `json:"totalReboots"`
 	CurrentOS     string       `json:"currentOS,omitempty"`
 	Hostname      string       `json:"hostname,omitempty"`
+
+	// Unexported: pending rotation tracking
+	pendingRotation *time.Time `json:"-"`
+	rotationDelay   float64    `json:"-"` // computed when first console output arrives
+	rotationTime    *time.Time `json:"-"` // carried until BIOS creates new boot event
 }
 
 type osDetector struct {
@@ -174,6 +181,14 @@ func (a *Analytics) ProcessText(serverName, text string) {
 	server.LastSeen = time.Now()
 	changed := false
 
+	// Consume pending rotation on first console output after rotation
+	if server.pendingRotation != nil {
+		server.rotationDelay = time.Since(*server.pendingRotation).Seconds()
+		server.rotationTime = server.pendingRotation
+		server.pendingRotation = nil
+		log.Infof("Power-on delay for %s: %.1fs", serverName, server.rotationDelay)
+	}
+
 	// Check for BIOS (boot start)
 	if a.matchesBIOS(text) {
 		log.Debugf("BIOS detected for %s, CurrentBoot=%v", serverName, server.CurrentBoot != nil)
@@ -202,6 +217,13 @@ func (a *Analytics) ProcessText(serverName, text string) {
 			server.CurrentBoot = &BootEvent{
 				StartTime: time.Now(),
 				Complete:  false,
+			}
+			// Apply rotation data if available
+			if server.rotationTime != nil {
+				server.CurrentBoot.RotationTime = server.rotationTime
+				server.CurrentBoot.PowerOnDelay = server.rotationDelay
+				server.rotationTime = nil
+				server.rotationDelay = 0
 			}
 			server.TotalReboots++
 			changed = true
@@ -292,6 +314,24 @@ func (a *Analytics) GetAllAnalytics() map[string]*ServerAnalytics {
 		result[name] = &copy
 	}
 	return result
+}
+
+func (a *Analytics) RecordRotation(serverName string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	server, exists := a.servers[serverName]
+	if !exists {
+		server = &ServerAnalytics{
+			ServerName:  serverName,
+			BootHistory: make([]BootEvent, 0),
+		}
+		a.servers[serverName] = server
+	}
+
+	now := time.Now()
+	server.pendingRotation = &now
+	log.Infof("Recorded rotation for %s at %s", serverName, now.Format(time.RFC3339))
 }
 
 func copyBootEvent(b *BootEvent) *BootEvent {

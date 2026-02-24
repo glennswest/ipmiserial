@@ -200,6 +200,9 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record rotation time for power-on delay tracking
+	s.solManager.RecordRotation(name)
+
 	// Restart the SOL session to get a clean connection for the new boot cycle.
 	// If no session exists, start one (triggered by PXE on boot).
 	if session := s.solManager.GetSession(name); session != nil {
@@ -387,6 +390,9 @@ func (s *Server) handleAnalyticsHTML(w http.ResponseWriter, r *http.Request) {
 	currentBootHTML := `<p class="text-muted mb-0">No boot data</p>`
 	if data.CurrentBoot != nil {
 		currentBootHTML = fmt.Sprintf(`<p class="mb-1"><strong>Started:</strong> %s</p>`, data.CurrentBoot.StartTime.Local().Format("Jan 2 15:04:05"))
+		if data.CurrentBoot.PowerOnDelay > 0 {
+			currentBootHTML += fmt.Sprintf(`<p class="mb-1"><strong>Power-On Delay:</strong> <span class="text-info">%.1fs</span></p>`, data.CurrentBoot.PowerOnDelay)
+		}
 		if data.CurrentBoot.Complete {
 			currentBootHTML += fmt.Sprintf(`<p class="mb-1"><strong>Completed:</strong> %s</p>`, data.CurrentBoot.EndTime.Local().Format("Jan 2 15:04:05"))
 			currentBootHTML += fmt.Sprintf(`<p class="mb-1"><strong>Boot Duration:</strong> <span class="text-info">%.1fs</span></p>`, data.CurrentBoot.BootDuration)

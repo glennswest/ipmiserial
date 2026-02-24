@@ -69,6 +69,10 @@ func (m *Manager) GetAllAnalytics() map[string]*ServerAnalytics {
 	return m.analytics.GetAllAnalytics()
 }
 
+func (m *Manager) RecordRotation(serverName string) {
+	m.analytics.RecordRotation(serverName)
+}
+
 func (m *Manager) StartSession(serverName, ip, username, password string) {
 	m.mu.Lock()
 	if existing, exists := m.sessions[serverName]; exists {
