@@ -26,17 +26,16 @@ var orphanedAnsiLineRegex = regexp.MustCompile(`(?m)\[[=?]?[\d;]+$`)
 
 // repeatTracker detects repeating multi-line blocks.
 // Stores the last N non-empty lines; when a new line matches the line
-// from blockLen lines ago for every position in the window, we have a
-// repeating block and suppress further copies.
+// from blockLen lines ago for 3 full cycles, we suppress further copies.
 type repeatTracker struct {
 	ring     []string // circular buffer of recent lines
 	pos      int      // next write position
 	blockLen int      // detected repeating block length (0 = no repeat)
-	count    int      // how many times the block has repeated
+	count    int      // lines matched in the repeating pattern
 	suppress bool     // currently suppressing output
 }
 
-const repeatRingSize = 32 // max block length we can detect
+const repeatRingSize = 64 // must hold at least 3x max block length
 
 func newRepeatTracker() *repeatTracker {
 	return &repeatTracker{
@@ -53,43 +52,43 @@ func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
 	}
 
 	// Store line in ring
-	prev := rt.ring[rt.pos]
 	rt.ring[rt.pos] = line
 	rt.pos = (rt.pos + 1) % repeatRingSize
 
 	if rt.suppress {
 		// Check if we're still in the same repeating block
-		// Compare current line against what was blockLen positions ago
 		idx := (rt.pos - 1 - rt.blockLen + repeatRingSize*2) % repeatRingSize
 		if rt.ring[idx] == line {
 			rt.count++
 			return false, ""
 		}
 		// Pattern broken — emit summary and resume
-		banner = fmt.Sprintf("\n[... repeated %d times ...]\n", rt.count/rt.blockLen)
+		reps := rt.count / rt.blockLen
 		rt.suppress = false
 		rt.blockLen = 0
 		rt.count = 0
+		if reps > 0 {
+			banner = fmt.Sprintf("\n[... repeated %d more times ...]\n", reps)
+		}
 		return true, banner
 	}
 
-	// Try to detect a repeat: check block lengths from 2..repeatRingSize/2
-	if prev == "" {
-		return true, ""
-	}
-	for bl := 2; bl <= repeatRingSize/2; bl++ {
+	// Try to detect a repeat: need 3 full copies in the ring (write 2, suppress from 3rd)
+	for bl := 3; bl <= repeatRingSize/3; bl++ {
 		match := true
+		// Check that 3 consecutive blocks of length bl are identical
 		for i := 0; i < bl; i++ {
 			a := (rt.pos - 1 - i + repeatRingSize*2) % repeatRingSize
 			b := (rt.pos - 1 - i - bl + repeatRingSize*2) % repeatRingSize
-			if rt.ring[a] != rt.ring[b] || rt.ring[a] == "" {
+			c := (rt.pos - 1 - i - 2*bl + repeatRingSize*2) % repeatRingSize
+			if rt.ring[a] == "" || rt.ring[a] != rt.ring[b] || rt.ring[b] != rt.ring[c] {
 				match = false
 				break
 			}
 		}
 		if match {
 			rt.blockLen = bl
-			rt.count = bl // we already wrote the second copy
+			rt.count = 0
 			rt.suppress = true
 			return false, ""
 		}
