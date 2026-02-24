@@ -623,6 +623,17 @@ async function fetchVersion() {
     }
 }
 
+// Reconnect SSE when returning to tab (browser may drop connection in background)
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && currentServer) {
+        const session = serverSessions[currentServer];
+        if (session && (!session.eventSource || session.eventSource.readyState === EventSource.CLOSED)) {
+            console.log('Tab visible, reconnecting SSE for', currentServer);
+            startServerStream(currentServer);
+        }
+    }
+});
+
 // Initial load and periodic refresh
 fetchVersion();
 fetchServers();
