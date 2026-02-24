@@ -116,6 +116,26 @@ func (m *Manager) StopSession(serverName string) {
 	}
 }
 
+// RestartSession stops the current SOL session, clears stale BMC sessions,
+// and starts a fresh connection. Used on log rotation to ensure clean SOL stream.
+func (m *Manager) RestartSession(serverName string) {
+	m.mu.Lock()
+	session, exists := m.sessions[serverName]
+	if !exists {
+		m.mu.Unlock()
+		return
+	}
+	ip := session.IP
+	username := session.Username
+	password := session.Password
+	m.mu.Unlock()
+
+	log.Infof("Restarting SOL session for %s", serverName)
+	m.StopSession(serverName)
+	clearBMCSessions(ip, username, password)
+	m.StartSession(serverName, ip, username, password)
+}
+
 func (m *Manager) GetSession(serverName string) *Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -200,9 +200,11 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start SOL session if not already running (triggered by PXE on boot)
-	if session := s.solManager.GetSession(name); session == nil {
-		// Look up IP from scanner
+	// Restart the SOL session to get a clean connection for the new boot cycle.
+	// If no session exists, start one (triggered by PXE on boot).
+	if session := s.solManager.GetSession(name); session != nil {
+		go s.solManager.RestartSession(name)
+	} else {
 		servers := s.scanner.GetServers()
 		if srv, exists := servers[name]; exists {
 			s.solManager.StartSession(name, srv.IP, srv.Username, srv.Password)
