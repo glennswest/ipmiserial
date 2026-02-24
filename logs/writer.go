@@ -26,18 +26,18 @@ var orphanedAnsiLineRegex = regexp.MustCompile(`(?m)\[[=?]?[\d;]+$`)
 
 // recentLines tracks recently written lines to suppress screen-redraw duplicates.
 // The BMC redraws the screen via cursor positioning; after cleaning, these become
-// duplicate lines. We keep a set of recent lines and skip any line already seen.
+// duplicate lines. Lines are remembered for a TTL period — screen redraws repeat
+// within seconds (suppressed) while legitimate repeats happen later (pass through).
 type recentLines struct {
-	lines    map[string]struct{} // set of recent line content
-	order    []string            // insertion order for eviction
-	maxLines int                 // max lines to remember
-	dupCount int                 // consecutive suppressed lines
+	lines    map[string]time.Time // line content → last seen time
+	dupCount int                  // consecutive suppressed lines
+	ttl      time.Duration        // how long to remember a line
 }
 
 func newRecentLines() *recentLines {
 	return &recentLines{
-		lines:    make(map[string]struct{}),
-		maxLines: 25,
+		lines: make(map[string]time.Time),
+		ttl:   10 * time.Second,
 	}
 }
 
@@ -53,8 +53,18 @@ func (rl *recentLines) checkLine(line string) (write bool, banner string) {
 		return true, ""
 	}
 
+	now := time.Now()
+
+	// Evict expired entries
+	for k, t := range rl.lines {
+		if now.Sub(t) > rl.ttl {
+			delete(rl.lines, k)
+		}
+	}
+
 	if _, exists := rl.lines[line]; exists {
 		rl.dupCount++
+		rl.lines[line] = now // refresh TTL on duplicate
 		return false, ""
 	}
 
@@ -64,16 +74,7 @@ func (rl *recentLines) checkLine(line string) (write bool, banner string) {
 		rl.dupCount = 0
 	}
 
-	// Add to recent set
-	rl.lines[line] = struct{}{}
-	rl.order = append(rl.order, line)
-
-	// Evict oldest when full
-	for len(rl.order) > rl.maxLines {
-		delete(rl.lines, rl.order[0])
-		rl.order = rl.order[1:]
-	}
-
+	rl.lines[line] = now
 	return true, banner
 }
 
