@@ -187,6 +187,17 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
 
+	// Enforce rotation cooldown — prevent mid-boot splits from duplicate calls
+	if !s.logWriter.CanRotate(name) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooEarly)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "skipped",
+			"message": "rotation cooldown active",
+		})
+		return
+	}
+
 	// Get optional log name from query param or form
 	logName := r.URL.Query().Get("name")
 	if logName == "" {
