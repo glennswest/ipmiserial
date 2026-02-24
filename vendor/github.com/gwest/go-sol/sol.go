@@ -215,6 +215,12 @@ func (s *Session) Close() error {
 	return s.conn.Close()
 }
 
+// LastRecvTime returns the time of the last packet received from the BMC,
+// including keepalive responses. This is useful for health monitoring.
+func (s *Session) LastRecvTime() time.Time {
+	return time.Unix(0, s.lastRecvTime.Load())
+}
+
 // Err returns any error that caused the session to fail.
 func (s *Session) Err() <-chan error {
 	return s.errCh

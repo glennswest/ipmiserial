@@ -205,7 +205,9 @@ func (m *Manager) broadcast(serverName string, data []byte) {
 }
 
 // healthCheck periodically inspects all connected sessions for staleness.
-// If a session is marked Connected but has no recent activity, it forces a reconnect.
+// It checks go-sol's lastRecvTime (which tracks ALL BMC packets, including
+// keepalive responses) rather than LastActivity (which only tracks SOL data).
+// This correctly handles idle servers that produce no console output.
 func (m *Manager) healthCheck() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -224,13 +226,14 @@ func (m *Manager) healthCheck() {
 				stale = append(stale, name)
 				continue
 			}
-			idle := time.Since(session.LastActivity)
+			lastRecv := session.solSession.LastRecvTime()
+			idle := time.Since(lastRecv)
 			if idle > staleThreshold {
-				log.Warnf("Health check: %s idle for %v (threshold %v), will restart", name, idle.Round(time.Second), staleThreshold)
+				log.Warnf("Health check: %s no BMC packets for %v (threshold %v), will restart", name, idle.Round(time.Second), staleThreshold)
 				stale = append(stale, name)
 				continue
 			}
-			log.Debugf("Health check: %s ok (idle %v)", name, idle.Round(time.Second))
+			log.Debugf("Health check: %s ok (last BMC packet %v ago)", name, idle.Round(time.Second))
 		}
 		m.mu.RUnlock()
 
