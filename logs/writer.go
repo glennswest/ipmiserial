@@ -22,14 +22,89 @@ var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x
 // Orphaned ANSI fragments — bracket sequences left after ESC byte was stripped
 var orphanedAnsiRegex = regexp.MustCompile(`\[\d*;?\d*[A-Za-z]|\[[\d;?]*[A-Za-z]`)
 
+// repeatTracker detects repeating multi-line blocks.
+// Stores the last N non-empty lines; when a new line matches the line
+// from blockLen lines ago for every position in the window, we have a
+// repeating block and suppress further copies.
+type repeatTracker struct {
+	ring     []string // circular buffer of recent lines
+	pos      int      // next write position
+	blockLen int      // detected repeating block length (0 = no repeat)
+	count    int      // how many times the block has repeated
+	suppress bool     // currently suppressing output
+}
+
+const repeatRingSize = 32 // max block length we can detect
+
+func newRepeatTracker() *repeatTracker {
+	return &repeatTracker{
+		ring: make([]string, repeatRingSize),
+	}
+}
+
+// checkLine returns true if this line should be written, false if suppressed.
+func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
+	trimmed := bytes.TrimRight([]byte(line), " \t")
+	line = string(trimmed)
+	if line == "" {
+		return true, ""
+	}
+
+	// Store line in ring
+	prev := rt.ring[rt.pos]
+	rt.ring[rt.pos] = line
+	rt.pos = (rt.pos + 1) % repeatRingSize
+
+	if rt.suppress {
+		// Check if we're still in the same repeating block
+		// Compare current line against what was blockLen positions ago
+		idx := (rt.pos - 1 - rt.blockLen + repeatRingSize*2) % repeatRingSize
+		if rt.ring[idx] == line {
+			rt.count++
+			return false, ""
+		}
+		// Pattern broken — emit summary and resume
+		banner = fmt.Sprintf("\n[... repeated %d times ...]\n", rt.count/rt.blockLen)
+		rt.suppress = false
+		rt.blockLen = 0
+		rt.count = 0
+		return true, banner
+	}
+
+	// Try to detect a repeat: check block lengths from 2..repeatRingSize/2
+	if prev == "" {
+		return true, ""
+	}
+	for bl := 2; bl <= repeatRingSize/2; bl++ {
+		match := true
+		for i := 0; i < bl; i++ {
+			a := (rt.pos - 1 - i + repeatRingSize*2) % repeatRingSize
+			b := (rt.pos - 1 - i - bl + repeatRingSize*2) % repeatRingSize
+			if rt.ring[a] != rt.ring[b] || rt.ring[a] == "" {
+				match = false
+				break
+			}
+		}
+		if match {
+			rt.blockLen = bl
+			rt.count = bl // we already wrote the second copy
+			rt.suppress = true
+			return false, ""
+		}
+	}
+
+	return true, ""
+}
+
 type Writer struct {
 	basePath      string
 	retentionDays int
 	files         map[string]*os.File
-	lastRotation  map[string]time.Time // track last rotation time per server
-	pending       map[string][]byte    // partial data buffer per server
-	lastLine      map[string][]byte    // last written line per server (for dedup)
-	trailingNL    map[string]int       // trailing newline count from last write
+	lastRotation  map[string]time.Time    // track last rotation time per server
+	pending       map[string][]byte       // partial data buffer per server
+	lastLine      map[string][]byte       // last written line per server (for dedup)
+	trailingNL    map[string]int          // trailing newline count from last write
+	repeats       map[string]*repeatTracker // multi-line block dedup per server
 	mu            sync.Mutex
 }
 
@@ -42,6 +117,7 @@ func NewWriter(basePath string, retentionDays int) *Writer {
 		pending:       make(map[string][]byte),
 		lastLine:      make(map[string][]byte),
 		trailingNL:    make(map[string]int),
+		repeats:       make(map[string]*repeatTracker),
 	}
 }
 
@@ -116,6 +192,35 @@ func (w *Writer) Write(serverName string, data []byte) error {
 			cleaned = cleaned[trim:]
 		}
 	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+
+	// Multi-line block dedup: detect repeating blocks (e.g. PXE boot loops)
+	rt := w.repeats[serverName]
+	if rt == nil {
+		rt = newRepeatTracker()
+		w.repeats[serverName] = rt
+	}
+
+	lines := bytes.Split(cleaned, []byte("\n"))
+	var out []byte
+	for _, line := range lines {
+		write, banner := rt.checkLine(string(line))
+		if banner != "" {
+			out = append(out, []byte(banner)...)
+		}
+		if write {
+			out = append(out, line...)
+			out = append(out, '\n')
+		}
+	}
+	// Trim the trailing \n we added to the last line if cleaned didn't end with one
+	if len(cleaned) > 0 && cleaned[len(cleaned)-1] != '\n' && len(out) > 0 {
+		out = out[:len(out)-1]
+	}
+	cleaned = out
+
 	if len(cleaned) == 0 {
 		return nil
 	}
@@ -218,8 +323,11 @@ func (w *Writer) RotateWithName(serverName, logName string) (string, error) {
 	// Remove current.log symlink
 	os.Remove(symlinkPath)
 
-	// Record rotation time
+	// Record rotation time and reset dedup state
 	w.lastRotation[serverName] = time.Now()
+	delete(w.lastLine, serverName)
+	delete(w.trailingNL, serverName)
+	delete(w.repeats, serverName)
 
 	// Create directory
 	if err := os.MkdirAll(dir, 0755); err != nil {

@@ -25,3 +25,4 @@
 ### 2026-02-23
 - **feat:** Power-on delay tracking: measures time from log rotation to first console output, displayed in analytics HTML and JSON API
 - **fix:** Update go-sol vendor — deactivate stale SOL instance 0x01 before activation (fixes server30 0x80 completion code)
+- **fix:** Multi-line block dedup in log writer — detects repeating blocks (e.g. PXE boot loops) and collapses with count summary
