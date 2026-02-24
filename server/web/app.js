@@ -86,6 +86,7 @@ function renderServerTabs() {
                     <span id="status-${server.name}" class="badge ${server.connected ? 'bg-success' : 'bg-danger'} me-2">
                         ${server.connected ? 'Connected' : 'Disconnected'}
                     </span>
+                    <button class="btn btn-outline-warning btn-sm me-1" id="reconnect-${server.name}" onclick="reconnectServer('${server.name}')">Reconnect</button>
                     <button class="btn btn-outline-info btn-sm me-1" onclick="copySelection('${server.name}')">Copy Selection</button>
                     <button class="btn btn-outline-secondary btn-sm" onclick="clearServerLogs('${server.name}')">Clear Logs</button>
                 </div>
@@ -555,6 +556,24 @@ function copySelection(serverName) {
             alert('No text selected. Click and drag to select text.');
         }
     }
+}
+
+async function reconnectServer(serverName) {
+    const btn = document.getElementById(`reconnect-${serverName}`);
+    const originalText = btn.textContent;
+    btn.textContent = 'Reconnecting...';
+    btn.disabled = true;
+
+    try {
+        await fetch(`/api/servers/${encodeURIComponent(serverName)}/reconnect`, { method: 'POST' });
+    } catch (error) {
+        console.error('Failed to reconnect:', error);
+    }
+
+    setTimeout(() => {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }, 3000);
 }
 
 function showCopyFeedback(btn) {

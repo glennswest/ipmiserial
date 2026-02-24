@@ -296,6 +296,31 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleReconnect(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	session := s.solManager.GetSession(name)
+	if session == nil {
+		// No session — try to start one from scanner data
+		servers := s.scanner.GetServers()
+		srv, exists := servers[name]
+		if !exists {
+			http.Error(w, "server not found", http.StatusNotFound)
+			return
+		}
+		s.solManager.StartSession(name, srv.IP, srv.Username, srv.Password)
+	} else {
+		go s.solManager.RestartSession(name)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "reconnecting",
+	})
+}
+
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	s.scanner.Refresh()
 	w.Header().Set("Content-Type", "application/json")

@@ -86,6 +86,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/servers/{name}/analytics", s.handleAnalytics).Methods("GET")
 	api.HandleFunc("/analytics", s.handleAllAnalytics).Methods("GET")
 	api.HandleFunc("/lookup/mac/{mac}", s.handleMacLookup).Methods("GET")
+	api.HandleFunc("/servers/{name}/reconnect", s.handleReconnect).Methods("POST")
 	api.HandleFunc("/refresh", s.handleRefresh).Methods("POST")
 	api.HandleFunc("/debug/bmh", s.handleDebugBMH).Methods("GET")
 	api.HandleFunc("/debug/rawdump/{name}", s.handleRawDump).Methods("GET")
