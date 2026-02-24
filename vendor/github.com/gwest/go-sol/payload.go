@@ -85,7 +85,14 @@ func (s *Session) activateSOL(ctx context.Context) error {
 	// Completion code at offset 22: RMCP(4) + Session(12) + rsAddr(1) + netFn(1) + chk(1) + rqAddr(1) + rqSeq(1) + cmd(1)
 	cc := resp[22]
 	if cc != 0x00 {
-		return fmt.Errorf("activate payload failed: completion code 0x%02X (crypto=%d integrity=%d)", cc, s.cryptoAlg, s.integrityAlg)
+		extra := ""
+		switch cc {
+		case 0x80:
+			extra = " (payload already active)"
+		case 0x81:
+			extra = " (payload type disabled)"
+		}
+		return fmt.Errorf("activate payload failed: completion code 0x%02X%s (crypto=%d integrity=%d)", cc, extra, s.cryptoAlg, s.integrityAlg)
 	}
 
 	// Use PayloadLen from session header to find response data length.
@@ -111,13 +118,11 @@ func (s *Session) activateSOL(ctx context.Context) error {
 func (s *Session) deactivateSOL(ctx context.Context) error {
 	instance := s.solPayloadInstance
 	if instance == 0 {
-		instance = 0x01 // Default SOL instance
+		instance = 0x01 // Default instance for pre-activation cleanup
 	}
-	// Bit 6 = force deactivate payload under another RMCP+ session
-	payloadType := byte(solPayloadType) | 0x40
 	data := []byte{
-		payloadType, // Payload type = SOL + force deactivate bit
-		instance,    // Payload instance
+		solPayloadType, // Payload type = SOL
+		instance,       // Payload instance
 		0x00, 0x00, 0x00, 0x00, // Aux data
 	}
 
@@ -126,30 +131,6 @@ func (s *Session) deactivateSOL(ctx context.Context) error {
 
 	_, err := s.sendRecv(ctx, packet, 2*time.Second)
 	return err
-}
-
-// disableEnableSOL disables then re-enables SOL via Set SOL Configuration Parameters.
-// This forcefully drops any stuck SOL payload regardless of which RMCP+ session owns it.
-func (s *Session) disableEnableSOL(ctx context.Context) {
-	// Set SOL Configuration Parameters: NetFn=Transport(0x0C), Cmd=0x21
-	// byte 1: channel (0x0E = current), byte 2: param selector (1 = SOL Enable), byte 3: value
-	const cmdSetSOLConfig = 0x21
-
-	// Disable SOL
-	disableData := []byte{0x0E, 0x01, 0x00}
-	msg := buildIPMIMessage(0x20, netFnTransport, 0, 0x81, 0, 0, cmdSetSOLConfig, disableData)
-	packet := s.buildAuthenticatedPacket(payloadIPMI, msg)
-	s.sendRecv(ctx, packet, 2*time.Second)
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Re-enable SOL
-	enableData := []byte{0x0E, 0x01, 0x01}
-	msg = buildIPMIMessage(0x20, netFnTransport, 0, 0x81, 0, 0, cmdSetSOLConfig, enableData)
-	packet = s.buildAuthenticatedPacket(payloadIPMI, msg)
-	s.sendRecv(ctx, packet, 2*time.Second)
-
-	time.Sleep(500 * time.Millisecond)
 }
 
 // readLoop reads SOL data from BMC as fast as possible
@@ -233,10 +214,8 @@ func (s *Session) readLoop() {
 		}
 
 		// Check if this is a SOL packet
-		// RMCP header (4) + Session header (12) + payload
-		rawPayloadType := buf[5]
-		payloadType := rawPayloadType & 0x3F // Mask out encrypted/authenticated bits
-		isEncrypted := rawPayloadType&0x80 != 0
+		// RMCP header (4) + Session header (12) + SOL header (4) + data
+		payloadType := buf[5] & 0x3F // Mask out encrypted/authenticated bits
 		if payloadType != solPayloadType {
 			continue // Not SOL data (could be IPMI response to keepalive)
 		}
@@ -248,27 +227,11 @@ func (s *Session) readLoop() {
 			continue // Invalid payload length
 		}
 
-		// Extract and optionally decrypt payload
-		payloadData := make([]byte, payloadLen)
-		copy(payloadData, buf[16:16+payloadLen])
-
-		if isEncrypted {
-			decrypted, err := s.decryptPayload(payloadData)
-			if err != nil {
-				s.logf("decrypt error: %v", err)
-				continue
-			}
-			payloadData = decrypted
-		}
-
-		if len(payloadData) < 4 {
-			continue
-		}
-
-		header := parseSolHeader(payloadData[:4])
+		header := parseSolHeader(buf[16:20])
 
 		// Check for NACK - need to retransmit
 		if header.OpStatus&solStatusNack != 0 {
+			// Retransmission requested - handle in write loop
 			continue
 		}
 
@@ -278,11 +241,11 @@ func (s *Session) readLoop() {
 		s.mu.Unlock()
 
 		// Extract character data (payload minus 4-byte SOL header)
-		dataLen := len(payloadData) - 4
+		dataLen := payloadLen - 4
 		if dataLen > 0 {
 			totalData++
 			data := make([]byte, dataLen)
-			copy(data, payloadData[4:])
+			copy(data, buf[20:20+dataLen])
 
 			// Send ACK immediately
 			s.sendSolAck()
@@ -421,8 +384,49 @@ func (s *Session) sendSessionKeepalive() {
 	s.conn.Write(packet)
 }
 
-// buildSolPacket builds a complete SOL packet with encryption and integrity.
+// buildSolPacket builds a complete SOL packet
 func (s *Session) buildSolPacket(payload []byte) []byte {
-	s.sessionSeq++
-	return s.wrapPayload(solPayloadType, s.sessionSeq, payload)
+	// SOL uses payload type 1
+	payloadType := uint8(solPayloadType)
+
+	// Add authenticated bit if we have integrity
+	if s.integrityAlg != integrityNone {
+		payloadType |= 0x40
+	}
+
+	// Build RMCP + session header
+	rmcp := rmcpHeader{
+		Version:  rmcpVersion,
+		Reserved: 0,
+		Sequence: rmcpSequence,
+		Class:    rmcpClassIPMI,
+	}
+
+	session := ipmi20SessionHeader{
+		AuthType:    ipmiAuthRMCPP,
+		PayloadType: payloadType,
+		SessionID:   s.remoteSessionID,
+		Sequence:    0, // SOL doesn't use session sequence
+		PayloadLen:  uint16(len(payload)),
+	}
+
+	packet := make([]byte, 0, 4+12+len(payload)+16)
+	packet = append(packet, rmcp.pack()...)
+	packet = append(packet, session.pack()...)
+	packet = append(packet, payload...)
+
+	// Add integrity if needed
+	if s.integrityAlg != integrityNone {
+		padLen := (4 - (len(payload) % 4)) % 4
+		for i := 0; i < padLen; i++ {
+			packet = append(packet, 0xFF)
+		}
+		packet = append(packet, uint8(padLen))
+		packet = append(packet, 0x07)
+
+		authCode := hmacHash(s.integrityAlg, s.k1, packet[4:])
+		packet = append(packet, authCode[:12]...)
+	}
+
+	return packet
 }

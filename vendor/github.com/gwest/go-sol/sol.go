@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,6 +124,7 @@ func (s *Session) Connect(ctx context.Context) error {
 
 	s.logf("session params: sessionID=0x%08x remoteSessionID=0x%08x auth=%d integrity=%d crypto=%d",
 		s.sessionID, s.remoteSessionID, s.authAlg, s.integrityAlg, s.cryptoAlg)
+	s.logf("local addr: %s", s.conn.LocalAddr().String())
 
 	// Step 4: Set Session Privilege Level to Admin
 	if err := s.setSessionPrivilege(ctx); err != nil {
@@ -132,29 +132,13 @@ func (s *Session) Connect(ctx context.Context) error {
 		return fmt.Errorf("set privilege: %w", err)
 	}
 
-	// Step 5: Deactivate any existing SOL session, then activate
-	s.deactivateSOL(ctx) // Ignore errors — may fail if no active payload
-	time.Sleep(500 * time.Millisecond)
+	// Step 5: Deactivate any existing SOL session
+	s.deactivateSOL(ctx) // Ignore errors
 
 	// Step 6: Activate SOL payload
 	if err := s.activateSOL(ctx); err != nil {
-		// Try force-deactivate for stale sessions (0x80)
-		if strings.Contains(err.Error(), "0x80") {
-			s.logf("SOL payload already active, force-deactivating and retrying")
-			s.deactivateSOL(ctx)
-			time.Sleep(time.Second)
-			if err2 := s.activateSOL(ctx); err2 != nil {
-				s.logf("force-deactivate failed, disabling/re-enabling SOL")
-				s.disableEnableSOL(ctx)
-				if err3 := s.activateSOL(ctx); err3 != nil {
-					s.conn.Close()
-					return fmt.Errorf("activate SOL: %w", err3)
-				}
-			}
-		} else {
-			s.conn.Close()
-			return fmt.Errorf("activate SOL: %w", err)
-		}
+		s.conn.Close()
+		return fmt.Errorf("activate SOL: %w", err)
 	}
 
 	s.logf("SOL activated: instance=%d maxOutbound=%d", s.solPayloadInstance, s.maxOutbound)
@@ -215,13 +199,13 @@ func (s *Session) Close() error {
 	return s.conn.Close()
 }
 
+// Err returns any error that caused the session to fail.
 // LastRecvTime returns the time of the last packet received from the BMC,
 // including keepalive responses. This is useful for health monitoring.
 func (s *Session) LastRecvTime() time.Time {
 	return time.Unix(0, s.lastRecvTime.Load())
 }
 
-// Err returns any error that caused the session to fail.
 func (s *Session) Err() <-chan error {
 	return s.errCh
 }

@@ -64,7 +64,7 @@ func (s *Session) openSession(ctx context.Context) error {
 	payload[17] = 0x00
 	payload[18] = 0x00
 	payload[19] = 0x08
-	payload[20] = integrityNone
+	payload[20] = integrityNone // Try no integrity first
 	// payload[21:24] reserved
 
 	// Confidentiality algorithm payload
@@ -72,7 +72,7 @@ func (s *Session) openSession(ctx context.Context) error {
 	payload[25] = 0x00
 	payload[26] = 0x00
 	payload[27] = 0x08
-	payload[28] = cryptoNone
+	payload[28] = cryptoNone // No encryption for simplicity
 	// payload[29:32] reserved
 
 	packet := buildRMCPPacket(ipmiAuthRMCPP, payloadOpenReq, 0, 0, payload)
@@ -232,49 +232,36 @@ func (s *Session) closeSession(ctx context.Context) error {
 	return err
 }
 
-// buildAuthenticatedPacket builds an IPMI command packet with encryption and/or integrity.
+// buildAuthenticatedPacket builds a packet with integrity
 func (s *Session) buildAuthenticatedPacket(payloadType uint8, payload []byte) []byte {
+	// Increment session sequence
 	s.sessionSeq++
-	return s.wrapPayload(payloadType, s.sessionSeq, payload)
-}
 
-// wrapPayload builds an RMCP+ packet with optional encryption and integrity.
-func (s *Session) wrapPayload(payloadType uint8, seq uint32, payload []byte) []byte {
-	if s.integrityAlg == integrityNone && s.cryptoAlg == cryptoNone {
-		return buildRMCPPacket(ipmiAuthRMCPP, payloadType, s.remoteSessionID, seq, payload)
+	// For unauthenticated/unencrypted, just wrap normally
+	if s.integrityAlg == integrityNone {
+		return buildRMCPPacket(ipmiAuthRMCPP, payloadType, s.remoteSessionID, s.sessionSeq, payload)
 	}
 
-	pt := payloadType
-	actualPayload := payload
+	// With integrity: add AuthCode trailer
+	// Payload type has authenticated bit set (0x40)
+	packet := buildRMCPPacket(ipmiAuthRMCPP, payloadType|0x40, s.remoteSessionID, s.sessionSeq, payload)
 
-	if s.cryptoAlg != cryptoNone {
-		pt |= 0x80 // encrypted
-		actualPayload = s.encryptPayload(payload)
+	// Add pad and AuthCode
+	padLen := (4 - (len(payload) % 4)) % 4
+	for i := 0; i < padLen; i++ {
+		packet = append(packet, 0xFF)
 	}
-	if s.integrityAlg != integrityNone {
-		pt |= 0x40 // authenticated
-	}
+	packet = append(packet, uint8(padLen))  // Pad length
+	packet = append(packet, 0x07)           // Next header (always 0x07)
 
-	packet := buildRMCPPacket(ipmiAuthRMCPP, pt, s.remoteSessionID, seq, actualPayload)
-
-	if s.integrityAlg != integrityNone {
-		padLen := (4 - (len(actualPayload) % 4)) % 4
-		for i := 0; i < padLen; i++ {
-			packet = append(packet, 0xFF)
-		}
-		packet = append(packet, uint8(padLen))
-		packet = append(packet, 0x07)
-
-		authCode := hmacHash(s.integrityAlg, s.k1, packet[4:])
-		packet = append(packet, authCode[:12]...)
-	}
+	// Calculate AuthCode over packet starting from AuthType
+	authCode := hmacHash(s.integrityAlg, s.k1, packet[4:])
+	packet = append(packet, authCode[:12]...) // Use first 12 bytes
 
 	return packet
 }
 
-// sendRecv sends a packet and waits for response.
-// If the response is encrypted, it decrypts the payload and reconstructs
-// the packet so callers can parse at the same offsets as unencrypted responses.
+// sendRecv sends a packet and waits for response
 func (s *Session) sendRecv(ctx context.Context, packet []byte, timeout time.Duration) ([]byte, error) {
 	if err := s.conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
@@ -290,25 +277,5 @@ func (s *Session) sendRecv(ctx context.Context, packet []byte, timeout time.Dura
 		return nil, fmt.Errorf("read failed: %w", err)
 	}
 
-	resp = resp[:n]
-
-	// Decrypt if response is encrypted (bit 7 of payload type at offset 5)
-	if n > 16 && resp[5]&0x80 != 0 {
-		payloadLen := int(binary.LittleEndian.Uint16(resp[14:16]))
-		if payloadLen > 0 && 16+payloadLen <= n {
-			decrypted, err := s.decryptPayload(resp[16 : 16+payloadLen])
-			if err == nil {
-				// Rebuild packet: headers (16 bytes) + decrypted payload
-				rebuilt := make([]byte, 16+len(decrypted))
-				copy(rebuilt, resp[:16])
-				copy(rebuilt[16:], decrypted)
-				// Fix payload type (clear encrypted bit) and payload length
-				rebuilt[5] = resp[5] & 0x7F
-				binary.LittleEndian.PutUint16(rebuilt[14:16], uint16(len(decrypted)))
-				return rebuilt, nil
-			}
-		}
-	}
-
-	return resp, nil
+	return resp[:n], nil
 }
