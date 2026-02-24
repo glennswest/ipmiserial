@@ -423,5 +423,6 @@ func (s *Session) sendSessionKeepalive() {
 
 // buildSolPacket builds a complete SOL packet with encryption and integrity.
 func (s *Session) buildSolPacket(payload []byte) []byte {
-	return s.wrapPayload(solPayloadType, 0, payload)
+	s.sessionSeq++
+	return s.wrapPayload(solPayloadType, s.sessionSeq, payload)
 }
