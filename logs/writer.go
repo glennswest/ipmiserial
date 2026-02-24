@@ -81,7 +81,7 @@ func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
 	}
 
 	// Detect repeat: need 2 identical consecutive blocks (first copy already written)
-	for bl := 3; bl <= repeatRingSize/2; bl++ {
+	for bl := 2; bl <= repeatRingSize/2; bl++ {
 		match := true
 		for i := 0; i < bl; i++ {
 			a := (rt.pos - 1 - i + repeatRingSize*2) % repeatRingSize
