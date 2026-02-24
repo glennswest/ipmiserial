@@ -25,6 +25,8 @@
 ### 2026-02-23
 - **feat:** Power-on delay tracking: measures time from log rotation to first console output, displayed in analytics HTML and JSON API
 - **fix:** Update go-sol vendor — deactivate stale SOL instance 0x01 before activation (fixes server30 0x80 completion code)
-- **fix:** Multi-line block dedup in log writer — detects repeating blocks (e.g. PXE boot loops) and collapses with count summary
+- **fix:** Replace block dedup with line-level dedup — keeps set of last 200 lines, suppresses screen-redraw duplicates from Dell iDRAC cursor repositioning
+- **fix:** SSE dedup event for live "(Duplicated N lines)" display in xterm.js
+- **fix:** SSE reconnect on browser tab visibility change
 - **fix:** Enforce 2-minute rotation cooldown — prevents duplicate pxemanager calls from splitting boot logs mid-BIOS
 - **fix:** Strip orphaned DEC private mode ([=3h) and incomplete ANSI fragments from logs
