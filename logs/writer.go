@@ -81,8 +81,10 @@ func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
 	}
 
 	// Detect repeat: need 2 identical consecutive blocks (first copy already written)
-	for bl := 2; bl <= repeatRingSize/2; bl++ {
+	// Min block size 4 to avoid false positives on interleaved screen redraws
+	for bl := 4; bl <= repeatRingSize/2; bl++ {
 		match := true
+		totalLen := 0
 		for i := 0; i < bl; i++ {
 			a := (rt.pos - 1 - i + repeatRingSize*2) % repeatRingSize
 			b := (rt.pos - 1 - i - bl + repeatRingSize*2) % repeatRingSize
@@ -90,10 +92,12 @@ func (rt *repeatTracker) checkLine(line string) (write bool, banner string) {
 				match = false
 				break
 			}
+			totalLen += len(rt.ring[a])
 		}
-		if match {
+		// Require substantial content to avoid false positives on short fragments
+		if match && totalLen >= 40 {
 			rt.blockLen = bl
-			rt.dupCount = bl // this second copy is the first dup
+			rt.dupCount = bl
 			rt.suppress = true
 			return false, ""
 		}
