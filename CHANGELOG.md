@@ -34,3 +34,5 @@
 ### 2026-02-24
 - **fix:** SSE live view broken during Fedora PXE install — `containsRow1Cursor` matched generic `\x1b[H` (cursor home) used by systemd/dracut/Anaconda, causing constant screen clearing; now only matches BIOS-specific `\x1b[01;00H`
 - **fix:** Log cleaner: strip mid-row cursor positions instead of converting to newlines (prevents fragments like `<F1>` appearing as separate lines)
+- **fix:** Analytics: strip ANSI escape codes before pattern matching — embedded color codes in systemd/Fedora output were breaking regex matches
+- **feat:** Analytics: detect Fedora installer (Anaconda), `dracut` switching root, and broader `Fedora \d+` version matching

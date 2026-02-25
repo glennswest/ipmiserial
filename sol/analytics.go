@@ -12,6 +12,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// ansiStripRegex strips ANSI escape codes so pattern matching works on
+// terminal output with embedded color/cursor sequences (systemd, Fedora installer, etc.)
+var ansiStripRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]`)
+
 type NetworkEvent struct {
 	Interface string    `json:"interface"`
 	Event     string    `json:"event"` // "up" or "down"
@@ -109,6 +113,8 @@ func NewAnalytics(dataPath string) *Analytics {
 		`systemd.*Startup finished`,
 		`Bare Metal Services Ready`,
 		`SSH:.*port 22`,
+		`dracut.*Switching root`,
+		`anaconda.*started`,
 	}
 
 	for _, p := range biosPatterns {
@@ -139,7 +145,8 @@ func NewAnalytics(dataPath string) *Analytics {
 		{"Rocky Linux", `Rocky Linux`},
 		{"AlmaLinux", `AlmaLinux`},
 		{"Red Hat Enterprise Linux", `Red Hat Enterprise Linux`},
-		{"Fedora", `Fedora release`},
+		{"Fedora", `Fedora release|Fedora \d+`},
+		{"Fedora Installer", `anaconda.*started|Starting installer|installation process`},
 		{"Alpine Linux", `Alpine Linux`},
 		{"Arch Linux", `Arch Linux`},
 		{"FreeBSD", `FreeBSD`},
@@ -168,6 +175,10 @@ func NewAnalytics(dataPath string) *Analytics {
 func (a *Analytics) ProcessText(serverName, text string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	// Strip ANSI escape codes so pattern matching works on terminal output
+	// with embedded color/cursor sequences (systemd, Fedora installer, etc.)
+	text = ansiStripRegex.ReplaceAllString(text, "")
 
 	server, exists := a.servers[serverName]
 	if !exists {
