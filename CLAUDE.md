@@ -1,6 +1,6 @@
 ## Deploying
 
-Build and push to `edge` tag. mkube's image-policy handles the update — NEVER delete the pod, just push the new image:
+Build and push to `edge` tag. Pod uses `image-policy: auto` — mkube watches the registry and auto-restarts when the image changes. Just push, no restart needed:
 
 ```bash
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o ipmiserial .
