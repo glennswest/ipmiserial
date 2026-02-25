@@ -3,9 +3,10 @@
 Build and push to `edge` tag, then trigger mkube's registry watcher to pick it up immediately (no pod delete needed):
 
 ```bash
-podman build --build-arg VERSION="$(cat VERSION)" -t 192.168.200.2:5000/ipmiserial:edge .
-podman push --tls-verify=false 192.168.200.2:5000/ipmiserial:edge
-curl -s -X POST http://192.168.200.2:8082/api/v1/registry/poll
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o ipmiserial .
+podman build --no-cache --build-arg VERSION="$(cat VERSION)" -t registry.gt.lo:5000/ipmiserial:edge .
+podman push --tls-verify=false registry.gt.lo:5000/ipmiserial:edge
+curl -s -X POST http://mkube.gt.lo:8082/api/v1/registry/poll
 ```
 
 ---
