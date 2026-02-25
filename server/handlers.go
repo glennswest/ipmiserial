@@ -415,6 +415,25 @@ func (s *Server) handleAnalyticsHTML(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Boot Milestones
+	milestonesHTML := `<p class="text-muted mb-0">No milestones detected</p>`
+	if data.CurrentBoot != nil && len(data.CurrentBoot.Milestones) > 0 {
+		milestonesHTML = ""
+		for _, m := range data.CurrentBoot.Milestones {
+			elapsed := m.Time.Sub(data.CurrentBoot.StartTime).Seconds()
+			countBadge := ""
+			if m.Count > 1 {
+				countBadge = fmt.Sprintf(` <span class="badge bg-info">x%d</span>`, m.Count)
+			}
+			milestonesHTML += fmt.Sprintf(
+				`<div class="d-flex justify-content-between align-items-center mb-1">`+
+					`<span>%s%s</span>`+
+					`<span class="text-info">+%.0fs</span>`+
+					`</div>`,
+				html.EscapeString(m.Name), countBadge, elapsed)
+		}
+	}
+
 	// Network Stats
 	networkHTML := `<p class="text-muted mb-0">No network events detected</p>`
 	if data.CurrentBoot != nil && len(data.CurrentBoot.NetworkStats) > 0 {
@@ -497,17 +516,20 @@ func (s *Server) handleAnalyticsHTML(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, `<div class="row">
-<div class="col-md-4 mb-3">
+<div class="col-md-3 mb-3">
 <div class="card"><div class="card-header">Current Status</div>
 <div class="card-body">
 <p class="mb-1"><strong>Status:</strong> <span class="%s">%s</span></p>
 %s%s%s
 <p class="mb-0"><strong>Total Reboots:</strong> %d</p>
 </div></div></div>
-<div class="col-md-4 mb-3">
+<div class="col-md-3 mb-3">
 <div class="card"><div class="card-header">Current Boot</div>
 <div class="card-body">%s</div></div></div>
-<div class="col-md-4 mb-3">
+<div class="col-md-3 mb-3">
+<div class="card"><div class="card-header">Boot Timeline</div>
+<div class="card-body">%s</div></div></div>
+<div class="col-md-3 mb-3">
 <div class="card"><div class="card-header">Network (Current Boot)</div>
 <div class="card-body">%s</div></div></div>
 </div>
@@ -517,7 +539,7 @@ func (s *Server) handleAnalyticsHTML(w http.ResponseWriter, r *http.Request) {
 <thead><tr><th>Boot Time</th><th>Duration</th><th>OS/Image</th><th>Network Issues</th><th>Status</th></tr></thead>
 <tbody>%s</tbody></table></div></div>`,
 		statusClass, statusText, uptimeHTML, hostnameHTML, osHTML, data.TotalReboots,
-		currentBootHTML, networkHTML, bootHistoryHTML)
+		currentBootHTML, milestonesHTML, networkHTML, bootHistoryHTML)
 }
 
 func (s *Server) handleLogListHTML(w http.ResponseWriter, r *http.Request) {

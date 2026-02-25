@@ -28,16 +28,23 @@ type NetworkStats struct {
 	DownCount int    `json:"downCount"`
 }
 
+type BootMilestone struct {
+	Name  string    `json:"name"`
+	Time  time.Time `json:"time"`
+	Count int       `json:"count,omitempty"` // >1 for repeating milestones (e.g. GRUB boot)
+}
+
 type BootEvent struct {
-	StartTime     time.Time      `json:"startTime"`
-	EndTime       time.Time      `json:"endTime,omitempty"`
-	BootDuration  float64        `json:"bootDuration,omitempty"`    // seconds
-	PowerOnDelay  float64        `json:"powerOnDelay,omitempty"`    // seconds from rotation to first console output
-	RotationTime  *time.Time     `json:"rotationTime,omitempty"`   // when log rotation triggered this boot
-	Complete      bool           `json:"complete"`
-	DetectedOS    string         `json:"detectedOS,omitempty"`
-	NetworkEvents []NetworkEvent `json:"networkEvents,omitempty"`
-	NetworkStats  []NetworkStats `json:"networkStats,omitempty"`
+	StartTime     time.Time       `json:"startTime"`
+	EndTime       time.Time       `json:"endTime,omitempty"`
+	BootDuration  float64         `json:"bootDuration,omitempty"`    // seconds
+	PowerOnDelay  float64         `json:"powerOnDelay,omitempty"`    // seconds from rotation to first console output
+	RotationTime  *time.Time      `json:"rotationTime,omitempty"`   // when log rotation triggered this boot
+	Complete      bool            `json:"complete"`
+	DetectedOS    string          `json:"detectedOS,omitempty"`
+	Milestones    []BootMilestone `json:"milestones,omitempty"`
+	NetworkEvents []NetworkEvent  `json:"networkEvents,omitempty"`
+	NetworkStats  []NetworkStats  `json:"networkStats,omitempty"`
 }
 
 type ServerAnalytics struct {
@@ -61,16 +68,23 @@ type osDetector struct {
 	pattern *regexp.Regexp
 }
 
+type milestoneDetector struct {
+	name     string
+	pattern  *regexp.Regexp
+	repeats  bool // true = count each occurrence (e.g. GRUB boot)
+}
+
 type Analytics struct {
-	servers        map[string]*ServerAnalytics
-	biosPatterns   []*regexp.Regexp
-	osPatterns     []*regexp.Regexp
-	osDetectors    []osDetector
-	hostPattern    *regexp.Regexp
-	netUpPattern   *regexp.Regexp
-	netDownPattern *regexp.Regexp
-	dataPath       string
-	mu             sync.RWMutex
+	servers             map[string]*ServerAnalytics
+	biosPatterns        []*regexp.Regexp
+	osPatterns          []*regexp.Regexp
+	osDetectors         []osDetector
+	milestoneDetectors  []milestoneDetector
+	hostPattern         *regexp.Regexp
+	netUpPattern        *regexp.Regexp
+	netDownPattern      *regexp.Regexp
+	dataPath            string
+	mu                  sync.RWMutex
 }
 
 func NewAnalytics(dataPath string) *Analytics {
@@ -157,6 +171,29 @@ func NewAnalytics(dataPath string) *Analytics {
 			a.osDetectors = append(a.osDetectors, osDetector{
 				name:    d.name,
 				pattern: re,
+			})
+		}
+	}
+
+	// Boot milestone patterns — key timestamps during PXE/CoreOS install
+	milestones := []struct {
+		name    string
+		pattern string
+		repeats bool
+	}{
+		{"iPXE Init", `iPXE initialising`, false},
+		{"Kernel Downloaded", `coreos-kernel.*ok`, false},
+		{"Initramfs Downloaded", `coreos-initramfs.*ok`, false},
+		{"GRUB Boot", `Booting.*Fedora CoreOS|Booting.*CoreOS`, true},
+		{"SSH Ready", `OpenSSH.*server.*started|Started.*sshd|SSH.*port 22|sshd.*Server listening`, false},
+		{"Login Ready", `login:\s*$`, false},
+	}
+	for _, m := range milestones {
+		if re, err := regexp.Compile("(?i)" + m.pattern); err == nil {
+			a.milestoneDetectors = append(a.milestoneDetectors, milestoneDetector{
+				name:    m.name,
+				pattern: re,
+				repeats: m.repeats,
 			})
 		}
 	}
@@ -277,6 +314,13 @@ func (a *Analytics) ProcessText(serverName, text string) {
 		}
 	}
 
+	// Track boot milestones
+	if server.CurrentBoot != nil {
+		if a.trackMilestones(server.CurrentBoot, text) {
+			changed = true
+		}
+	}
+
 	// Track network interface events
 	a.trackNetworkEvents(server, text)
 
@@ -350,6 +394,12 @@ func copyBootEvent(b *BootEvent) *BootEvent {
 		return nil
 	}
 	copy := *b
+	if len(b.Milestones) > 0 {
+		copy.Milestones = make([]BootMilestone, len(b.Milestones))
+		for i, m := range b.Milestones {
+			copy.Milestones[i] = m
+		}
+	}
 	if len(b.NetworkEvents) > 0 {
 		copy.NetworkEvents = make([]NetworkEvent, len(b.NetworkEvents))
 		for i, e := range b.NetworkEvents {
@@ -483,6 +533,38 @@ func (a *Analytics) detectHostname(text string) string {
 		return matches[1]
 	}
 	return ""
+}
+
+func (a *Analytics) trackMilestones(boot *BootEvent, text string) bool {
+	changed := false
+	now := time.Now()
+	for _, md := range a.milestoneDetectors {
+		if !md.pattern.MatchString(text) {
+			continue
+		}
+		// Check if this milestone already exists
+		found := false
+		for i := range boot.Milestones {
+			if boot.Milestones[i].Name == md.name {
+				found = true
+				if md.repeats {
+					boot.Milestones[i].Count++
+					boot.Milestones[i].Time = now // update to latest
+					changed = true
+				}
+				break
+			}
+		}
+		if !found {
+			boot.Milestones = append(boot.Milestones, BootMilestone{
+				Name:  md.name,
+				Time:  now,
+				Count: 1,
+			})
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (a *Analytics) trackNetworkEvents(server *ServerAnalytics, text string) {

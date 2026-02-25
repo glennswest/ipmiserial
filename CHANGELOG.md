@@ -37,3 +37,4 @@
 - **fix:** Analytics: strip ANSI escape codes before pattern matching — embedded color codes in systemd/Fedora output were breaking regex matches
 - **feat:** Analytics: detect Fedora installer (Anaconda), `dracut` switching root, and broader `Fedora \d+` version matching
 - **fix:** SSE reconnect no longer clears terminal — skip catchup and clear screen when switching tabs (terminal already has content)
+- **feat:** Boot timeline milestones in analytics — tracks iPXE init, kernel/initramfs download, GRUB boot (with count for reboots), SSH ready, and login ready with elapsed timestamps
