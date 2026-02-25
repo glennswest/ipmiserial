@@ -42,34 +42,38 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: %s\n\n", name)
 	flusher.Flush()
 
-	// Send catchup from log file (last ~4KB of cleaned text)
-	if _, curPath, err := s.logWriter.GetCurrentLogTarget(name); err == nil && curPath != "" {
-		if f, err := os.Open(curPath); err == nil {
-			if info, _ := f.Stat(); info != nil {
-				size := info.Size()
-				const catchupSize = 4096
-				var offset int64
-				if size > catchupSize {
-					f.Seek(size-catchupSize, io.SeekStart)
-					offset = size - catchupSize
+	// Skip catchup and clear screen on reconnect (terminal already has content).
+	// Only send catchup on initial connection (?catchup=0 means skip).
+	if r.URL.Query().Get("catchup") != "0" {
+		// Send catchup from log file (last ~4KB of cleaned text)
+		if _, curPath, err := s.logWriter.GetCurrentLogTarget(name); err == nil && curPath != "" {
+			if f, err := os.Open(curPath); err == nil {
+				if info, _ := f.Stat(); info != nil {
+					size := info.Size()
+					const catchupSize = 4096
+					var offset int64
+					if size > catchupSize {
+						f.Seek(size-catchupSize, io.SeekStart)
+						offset = size - catchupSize
+					}
+					buf := make([]byte, size-offset)
+					n, _ := f.Read(buf)
+					if n > 0 {
+						encoded := base64.StdEncoding.EncodeToString(buf[:n])
+						fmt.Fprintf(w, "data: %s\n\n", encoded)
+						flusher.Flush()
+					}
 				}
-				buf := make([]byte, size-offset)
-				n, _ := f.Read(buf)
-				if n > 0 {
-					encoded := base64.StdEncoding.EncodeToString(buf[:n])
-					fmt.Fprintf(w, "data: %s\n\n", encoded)
-					flusher.Flush()
-				}
+				f.Close()
 			}
-			f.Close()
 		}
-	}
 
-	// Clear screen before raw stream so BIOS cursor positioning works
-	// against a clean terminal state (catchup text stays in scrollback)
-	clearScreen := base64.StdEncoding.EncodeToString([]byte("\x1b[2J\x1b[H"))
-	fmt.Fprintf(w, "data: %s\n\n", clearScreen)
-	flusher.Flush()
+		// Clear screen before raw stream so BIOS cursor positioning works
+		// against a clean terminal state (catchup text stays in scrollback)
+		clearScreen := base64.StdEncoding.EncodeToString([]byte("\x1b[2J\x1b[H"))
+		fmt.Fprintf(w, "data: %s\n\n", clearScreen)
+		flusher.Flush()
+	}
 
 	// Subscribe to raw SOL broadcast
 	ch := s.solManager.Subscribe(name)

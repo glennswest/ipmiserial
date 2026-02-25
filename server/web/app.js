@@ -256,11 +256,16 @@ function startServerStream(name) {
     const session = serverSessions[name];
     if (!session) return;
 
+    const isReconnect = session.eventSource !== null;
     if (session.eventSource) {
         session.eventSource.close();
     }
 
-    const eventSource = new EventSource(`/api/servers/${encodeURIComponent(name)}/stream`);
+    // Skip catchup on reconnect — terminal already has screen content
+    const url = isReconnect
+        ? `/api/servers/${encodeURIComponent(name)}/stream?catchup=0`
+        : `/api/servers/${encodeURIComponent(name)}/stream`;
+    const eventSource = new EventSource(url);
 
     eventSource.addEventListener('connected', (event) => {
         console.log('SSE connected to:', event.data);

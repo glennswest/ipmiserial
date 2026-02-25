@@ -36,3 +36,4 @@
 - **fix:** Log cleaner: strip mid-row cursor positions instead of converting to newlines (prevents fragments like `<F1>` appearing as separate lines)
 - **fix:** Analytics: strip ANSI escape codes before pattern matching — embedded color codes in systemd/Fedora output were breaking regex matches
 - **feat:** Analytics: detect Fedora installer (Anaconda), `dracut` switching root, and broader `Fedora \d+` version matching
+- **fix:** SSE reconnect no longer clears terminal — skip catchup and clear screen when switching tabs (terminal already has content)
