@@ -111,10 +111,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // containsRow1Cursor detects BIOS screen redraws by checking for cursor
-// positioning to row 1. The BIOS doesn't send clear screen before redrawing.
+// positioning to row 1 in the zero-padded format that Intel PXE BIOS uses.
+// Only matches \x1b[01;00H — generic sequences like \x1b[H or \x1b[1;1H
+// are used by normal terminal applications (systemd, Fedora installer, etc.)
+// and must NOT trigger screen clearing.
 func containsRow1Cursor(data []byte) bool {
-	return bytes.Contains(data, []byte("\x1b[01;00H")) ||
-		bytes.Contains(data, []byte("\x1b[1;1H")) ||
-		bytes.Contains(data, []byte("\x1b[1;0H")) ||
-		bytes.Contains(data, []byte("\x1b[H"))
+	return bytes.Contains(data, []byte("\x1b[01;00H"))
 }

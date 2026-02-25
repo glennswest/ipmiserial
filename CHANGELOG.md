@@ -30,3 +30,7 @@
 - **fix:** SSE reconnect on browser tab visibility change
 - **fix:** Enforce 2-minute rotation cooldown — prevents duplicate pxemanager calls from splitting boot logs mid-BIOS
 - **fix:** Strip orphaned DEC private mode ([=3h) and incomplete ANSI fragments from logs
+
+### 2026-02-24
+- **fix:** SSE live view broken during Fedora PXE install — `containsRow1Cursor` matched generic `\x1b[H` (cursor home) used by systemd/dracut/Anaconda, causing constant screen clearing; now only matches BIOS-specific `\x1b[01;00H`
+- **fix:** Log cleaner: strip mid-row cursor positions instead of converting to newlines (prevents fragments like `<F1>` appearing as separate lines)

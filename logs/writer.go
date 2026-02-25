@@ -13,8 +13,33 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Cursor position pattern - these should become newlines
+// Cursor position pattern - matches all cursor positioning sequences
 var cursorPosRegex = regexp.MustCompile(`\x1b\[\d+;\d*[Hf]|\x1b\[\d+[Hf]`)
+
+// cleanCursorPositions converts row-start cursor positions (col 0 or 1) to newlines
+// and strips mid-row positions (col > 1). This prevents fragments like "<F1>" or
+// "ontroller Drivers...Done" from appearing as separate lines when the BMC uses
+// cursor positioning within the same row (e.g. \x1b[05;35H<F1>).
+func cleanCursorPositions(data []byte) []byte {
+	return cursorPosRegex.ReplaceAllFunc(data, func(match []byte) []byte {
+		semi := bytes.IndexByte(match, ';')
+		if semi == -1 {
+			// No column (e.g. \x1b[5H) → row start
+			return []byte("\n")
+		}
+		// Parse column between ';' and final letter
+		col := 0
+		for _, c := range match[semi+1 : len(match)-1] {
+			if c >= '0' && c <= '9' {
+				col = col*10 + int(c-'0')
+			}
+		}
+		if col <= 1 {
+			return []byte("\n") // row start
+		}
+		return nil // mid-row → strip (keeps text on one line)
+	})
+}
 
 // ANSI escape code pattern - matches all other escape sequences
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]|\x1b[78]|\x1b[DMEHc]`)
@@ -220,8 +245,8 @@ func (w *Writer) Write(serverName string, data []byte) error {
 
 // cleanLogData removes ANSI escape codes and control characters from log data
 func cleanLogData(data []byte) []byte {
-	// Replace cursor positioning with newlines (BIOS uses these instead of \n)
-	data = cursorPosRegex.ReplaceAll(data, []byte("\n"))
+	// Convert row-start cursor positions to newlines, strip mid-row positions
+	data = cleanCursorPositions(data)
 
 	// Remove other ANSI escape sequences
 	data = ansiRegex.ReplaceAll(data, nil)
