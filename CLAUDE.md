@@ -1,12 +1,11 @@
 ## Deploying
 
-Build and push to `edge` tag, then trigger mkube's registry watcher to pick it up immediately (no pod delete needed):
+Build and push to `edge` tag. mkube's image-policy handles the update — NEVER delete the pod, just push the new image:
 
 ```bash
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o ipmiserial .
-podman build --no-cache --build-arg VERSION="$(cat VERSION)" -t registry.gt.lo:5000/ipmiserial:edge .
+podman build --no-cache --platform linux/arm64 -t registry.gt.lo:5000/ipmiserial:edge .
 podman push --tls-verify=false registry.gt.lo:5000/ipmiserial:edge
-curl -s -X POST http://mkube.gt.lo:8082/api/v1/registry/poll
 ```
 
 ---
