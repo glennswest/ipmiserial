@@ -39,3 +39,6 @@
 - **fix:** SSE reconnect no longer clears terminal — skip catchup and clear screen when switching tabs (terminal already has content)
 - **feat:** Boot timeline milestones in analytics — tracks iPXE init, kernel/initramfs download, GRUB boot (with count for reboots), SSH ready, and login ready with elapsed timestamps
 - **fix:** Log rotation no longer restarts SOL session — was dropping boot output during reconnect window, causing empty log files
+
+### 2026-02-27
+- **feat:** Auth error indicator — orange dot + "Auth Error" badge when IPMI credentials are wrong (RAKP/authentication failures), distinct from generic red "Disconnected"
