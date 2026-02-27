@@ -5,7 +5,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-IMAGE="ipmiserial:latest"
+REGISTRY="registry.gt.lo:5000"
+IMAGE="$REGISTRY/ipmiserial:edge"
 
 VERSION=$(cat VERSION 2>/dev/null | tr -d '\n' || echo "0.0.0")
 GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
