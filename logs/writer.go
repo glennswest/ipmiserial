@@ -128,6 +128,10 @@ func NewWriter(basePath string, retentionDays int) *Writer {
 	}
 }
 
+func (w *Writer) BasePath() string {
+	return w.basePath
+}
+
 func (w *Writer) Write(serverName string, data []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

@@ -90,6 +90,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/refresh", s.handleRefresh).Methods("POST")
 	api.HandleFunc("/debug/bmh", s.handleDebugBMH).Methods("GET")
 	api.HandleFunc("/debug/rawdump/{name}", s.handleRawDump).Methods("GET")
+	api.HandleFunc("/debug/log", s.handleDebugLog).Methods("GET")
 
 	// HTMX HTML fragment routes
 	htmx := s.router.PathPrefix("/htmx").Subrouter()

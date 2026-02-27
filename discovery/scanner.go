@@ -121,22 +121,37 @@ func (s *Scanner) Refresh() {
 }
 
 func (s *Scanner) Run(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("Scanner goroutine panicked: %v", r)
+		}
+	}()
+
 	// Load from cache first for immediate availability
 	if cached := s.cache.Load(); len(cached) > 0 {
 		s.mu.Lock()
 		for name, srv := range cached {
 			if _, exists := s.servers[name]; !exists {
 				s.servers[name] = srv
+				log.Infof("Cache loaded: %s (ip=%s)", name, srv.IP)
 			}
 		}
 		s.mu.Unlock()
+		log.Infof("Loaded %d servers from cache, calling onChange", len(cached))
 		if s.onChange != nil {
 			s.onChange(s.GetServers())
 		}
+	} else {
+		log.Info("No BMH cache found or cache empty")
 	}
 
 	// Fetch live data (updates cache)
 	s.fetchBMH()
+
+	s.mu.RLock()
+	serverCount := len(s.servers)
+	s.mu.RUnlock()
+	log.Infof("After fetchBMH: %d servers in map", serverCount)
 
 	if s.onChange != nil {
 		s.onChange(s.GetServers())
@@ -163,21 +178,32 @@ func (s *Scanner) Run(ctx context.Context) {
 
 func (s *Scanner) fetchBMH() {
 	if s.bmhURL == "" {
+		log.Warn("fetchBMH: bmhURL is empty, skipping")
 		return
 	}
 
-	resp, err := s.httpClient.Get(s.BMHListURL())
+	url := s.BMHListURL()
+	log.Infof("fetchBMH: fetching %s", url)
+
+	resp, err := s.httpClient.Get(url)
 	if err != nil {
-		log.Warnf("Failed to fetch BMH list: %v", err)
+		log.Warnf("fetchBMH: HTTP request failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	var list BareMetalHostList
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		log.Warnf("Failed to decode BMH response: %v", err)
+	if resp.StatusCode != 200 {
+		log.Warnf("fetchBMH: unexpected status %d", resp.StatusCode)
 		return
 	}
+
+	var list BareMetalHostList
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		log.Warnf("fetchBMH: JSON decode failed: %v", err)
+		return
+	}
+
+	log.Infof("fetchBMH: decoded %d BMH items", len(list.Items))
 
 	hasNew := false
 	s.mu.Lock()

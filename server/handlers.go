@@ -748,6 +748,21 @@ func (s *Server) handleDebugBMH(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleDebugLog(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	appLogPath := s.logWriter.BasePath() + "/ipmiserial.log"
+	data, err := os.ReadFile(appLogPath)
+	if err != nil {
+		fmt.Fprintf(w, "error reading log: %v\n", err)
+		return
+	}
+	// Show last 16KB
+	if len(data) > 16384 {
+		data = data[len(data)-16384:]
+	}
+	w.Write(data)
+}
+
 func (s *Server) handleRawDump(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
