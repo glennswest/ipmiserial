@@ -42,3 +42,9 @@
 
 ### 2026-02-27
 - **feat:** Auth error indicator — orange dot + "Auth Error" badge when IPMI credentials are wrong (RAKP/authentication failures), distinct from generic red "Disconnected"
+- **fix:** Scanner empty after pod restart — BMH watch DELETE events were emptying the server map; now ignored (physical servers don't disappear)
+- **fix:** fetchBMH retry at startup — network not ready on pod boot caused "no route to host"; now retries every 5s until servers found
+- **fix:** Periodic BMH refresh every 60s alongside watch to catch missed updates
+- **fix:** Show session IP in API when scanner IP is empty (fallback for cache/timing issues)
+- **fix:** Export `BMHListURL()` and add `scanner_servers` state to debug endpoint
+- **feat:** `/api/debug/log` endpoint to read application log remotely
