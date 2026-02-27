@@ -214,11 +214,10 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 	// Record rotation time for power-on delay tracking
 	s.solManager.RecordRotation(name)
 
-	// Restart the SOL session to get a clean connection for the new boot cycle.
-	// If no session exists, start one (triggered by PXE on boot).
-	if session := s.solManager.GetSession(name); session != nil {
-		go s.solManager.RestartSession(name)
-	} else {
+	// If no session exists yet, start one (triggered by PXE on boot).
+	// Do NOT restart an existing session — the SOL connection is still active
+	// and restarting it drops boot output while reconnecting.
+	if session := s.solManager.GetSession(name); session == nil {
 		servers := s.scanner.GetServers()
 		if srv, exists := servers[name]; exists {
 			s.solManager.StartSession(name, srv.IP, srv.Username, srv.Password)
