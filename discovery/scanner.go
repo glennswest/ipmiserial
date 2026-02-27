@@ -145,33 +145,71 @@ func (s *Scanner) Run(ctx context.Context) {
 		log.Info("No BMH cache found or cache empty")
 	}
 
-	// Fetch live data (updates cache)
-	s.fetchBMH()
-
-	s.mu.RLock()
-	serverCount := len(s.servers)
-	s.mu.RUnlock()
-	log.Infof("After fetchBMH: %d servers in map", serverCount)
+	// Retry fetchBMH until it gets servers (network may not be ready at startup)
+	for i := 0; ; i++ {
+		s.fetchBMH()
+		s.mu.RLock()
+		serverCount := len(s.servers)
+		s.mu.RUnlock()
+		if serverCount > 0 {
+			log.Infof("fetchBMH: %d servers discovered", serverCount)
+			break
+		}
+		if i > 0 && i%6 == 0 {
+			log.Warnf("fetchBMH: still 0 servers after %d attempts, retrying...", i)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
 
 	if s.onChange != nil {
 		s.onChange(s.GetServers())
 	}
 
-	// Watch with reconnect loop
+	// Watch with reconnect loop + periodic refresh
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			s.watchBMH(ctx)
-			// Watch disconnected, wait before reconnecting
+		}
+
+		// Run watch and periodic fetch in parallel
+		watchCtx, watchCancel := context.WithCancel(ctx)
+		watchDone := make(chan struct{})
+		go func() {
+			s.watchBMH(watchCtx)
+			close(watchDone)
+		}()
+
+		// Periodic refresh every 60s to catch any missed updates
+		refreshTicker := time.NewTicker(60 * time.Second)
+	watchLoop:
+		for {
 			select {
 			case <-ctx.Done():
+				watchCancel()
+				refreshTicker.Stop()
 				return
-			case <-time.After(5 * time.Second):
-				log.Info("Reconnecting BMH watch...")
+			case <-watchDone:
+				refreshTicker.Stop()
+				break watchLoop
+			case <-refreshTicker.C:
 				s.fetchBMH()
 			}
+		}
+		watchCancel()
+
+		// Watch disconnected, wait before reconnecting
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+			log.Info("Reconnecting BMH watch...")
+			s.fetchBMH()
 		}
 	}
 }
