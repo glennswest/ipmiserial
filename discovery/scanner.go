@@ -71,8 +71,8 @@ func NewScanner(bmhURL, namespace, dataDir string) *Scanner {
 	}
 }
 
-// bmhListURL returns the URL for listing BMH objects, scoped by namespace if configured.
-func (s *Scanner) bmhListURL() string {
+// BMHListURL returns the URL for listing BMH objects, scoped by namespace if configured.
+func (s *Scanner) BMHListURL() string {
 	if s.namespace != "" {
 		return s.bmhURL + "/api/v1/namespaces/" + s.namespace + "/baremetalhosts"
 	}
@@ -166,7 +166,7 @@ func (s *Scanner) fetchBMH() {
 		return
 	}
 
-	resp, err := s.httpClient.Get(s.bmhListURL())
+	resp, err := s.httpClient.Get(s.BMHListURL())
 	if err != nil {
 		log.Warnf("Failed to fetch BMH list: %v", err)
 		return
@@ -201,7 +201,7 @@ func (s *Scanner) watchBMH(ctx context.Context) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", s.bmhListURL()+"?watch=true", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", s.BMHListURL()+"?watch=true", nil)
 	if err != nil {
 		log.Warnf("Failed to create BMH watch request: %v", err)
 		return

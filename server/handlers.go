@@ -63,6 +63,9 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 			info.Connected = session.Connected
 			info.LastError = session.LastError
 			info.AuthError = !session.Connected && isAuthError(session.LastError)
+			if info.IP == "" && session.IP != "" {
+				info.IP = session.IP
+			}
 		}
 		result = append(result, info)
 	}
@@ -77,6 +80,9 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 			info.Connected = session.Connected
 			info.LastError = session.LastError
 			info.AuthError = !session.Connected && isAuthError(session.LastError)
+			if info.IP == "" && session.IP != "" {
+				info.IP = session.IP
+			}
 		}
 		result = append(result, info)
 	}
@@ -701,7 +707,7 @@ func formatDuration(seconds float64) string {
 func (s *Server) handleDebugBMH(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	bmhURL := s.scanner.BMHURL()
-	url := bmhURL + "/api/v1/baremetalhosts"
+	fetchURL := s.scanner.BMHListURL()
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Test gateway connectivity
@@ -716,7 +722,7 @@ func (s *Server) handleDebugBMH(w http.ResponseWriter, r *http.Request) {
 	// Test BMH API
 	bmhErr := ""
 	bmhStatus := 0
-	resp, err := client.Get(url)
+	resp, err := client.Get(fetchURL)
 	if err != nil {
 		bmhErr = err.Error()
 	} else {
@@ -724,13 +730,21 @@ func (s *Server) handleDebugBMH(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 	}
 
+	// Scanner internal state
+	scannerServers := s.scanner.GetServers()
+	scannerState := make(map[string]string)
+	for name, srv := range scannerServers {
+		scannerState[name] = fmt.Sprintf("ip=%s online=%v user=%s", srv.IP, srv.Online, srv.Username)
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"bmh_url":        bmhURL,
-		"fetch_url":      url,
+		"fetch_url":      fetchURL,
 		"bmh_status":     bmhStatus,
 		"bmh_error":      bmhErr,
 		"gateway_test":   "192.168.11.1:80",
 		"gateway_error":  gwErr,
+		"scanner_servers": scannerState,
 	})
 }
 
