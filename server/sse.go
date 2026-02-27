@@ -68,11 +68,6 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Clear screen before raw stream so BIOS cursor positioning works
-		// against a clean terminal state (catchup text stays in scrollback)
-		clearScreen := base64.StdEncoding.EncodeToString([]byte("\x1b[2J\x1b[H"))
-		fmt.Fprintf(w, "data: %s\n\n", clearScreen)
-		flusher.Flush()
 	}
 
 	// Subscribe to raw SOL broadcast
