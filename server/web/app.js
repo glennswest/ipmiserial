@@ -61,7 +61,7 @@ function renderServerTabs() {
                id="tab-${server.name}"
                href="#"
                onclick="selectServer('${server.name}'); return false;">
-                <span class="server-status ${server.connected ? 'online' : (server.online ? 'connecting' : 'offline')}"></span>
+                <span class="server-status ${server.connected ? 'online' : (server.authError ? 'auth-error' : (server.online ? 'connecting' : 'offline'))}"></span>
                 ${server.name}
             </a>
         </li>
@@ -83,8 +83,8 @@ function renderServerTabs() {
                     </li>
                 </ul>
                 <div>
-                    <span id="status-${server.name}" class="badge ${server.connected ? 'bg-success' : 'bg-danger'} me-2">
-                        ${server.connected ? 'Connected' : 'Disconnected'}
+                    <span id="status-${server.name}" class="badge ${server.connected ? 'bg-success' : (server.authError ? 'bg-warning' : 'bg-danger')} me-2">
+                        ${server.connected ? 'Connected' : (server.authError ? 'Auth Error' : 'Disconnected')}
                     </span>
                     <button class="btn btn-outline-warning btn-sm me-1" id="reconnect-${server.name}" onclick="reconnectServer('${server.name}')">Reconnect</button>
                     <button class="btn btn-outline-info btn-sm me-1" onclick="copySelection('${server.name}')">Copy Selection</button>
@@ -154,15 +154,27 @@ function updateServerStatus() {
         if (tab) {
             const statusSpan = tab.querySelector('.server-status');
             if (statusSpan) {
-                statusSpan.className = `server-status ${server.connected ? 'online' : (server.online ? 'connecting' : 'offline')}`;
+                let dotClass = 'offline';
+                if (server.connected) dotClass = 'online';
+                else if (server.authError) dotClass = 'auth-error';
+                else if (server.online) dotClass = 'connecting';
+                statusSpan.className = `server-status ${dotClass}`;
             }
         }
 
         // Update badge
         const badge = document.getElementById(`status-${server.name}`);
         if (badge) {
-            badge.className = `badge ${server.connected ? 'bg-success' : 'bg-danger'} me-2`;
-            badge.textContent = server.connected ? 'Connected' : 'Disconnected';
+            if (server.connected) {
+                badge.className = 'badge bg-success me-2';
+                badge.textContent = 'Connected';
+            } else if (server.authError) {
+                badge.className = 'badge bg-warning me-2';
+                badge.textContent = 'Auth Error';
+            } else {
+                badge.className = 'badge bg-danger me-2';
+                badge.textContent = 'Disconnected';
+            }
         }
     });
 }

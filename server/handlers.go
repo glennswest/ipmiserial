@@ -23,6 +23,17 @@ type ServerInfo struct {
 	Online    bool   `json:"online"`
 	Connected bool   `json:"connected"`
 	LastError string `json:"lastError,omitempty"`
+	AuthError bool   `json:"authError,omitempty"`
+}
+
+// isAuthError checks if an error string indicates IPMI credential failure.
+func isAuthError(errStr string) bool {
+	lower := strings.ToLower(errStr)
+	return strings.Contains(lower, "rakp") ||
+		strings.Contains(lower, "authentication") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "privilege") ||
+		strings.Contains(lower, "password")
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +62,7 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 		if session, exists := sessions[name]; exists {
 			info.Connected = session.Connected
 			info.LastError = session.LastError
+			info.AuthError = !session.Connected && isAuthError(session.LastError)
 		}
 		result = append(result, info)
 	}
@@ -64,6 +76,7 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 		if session, exists := sessions[name]; exists {
 			info.Connected = session.Connected
 			info.LastError = session.LastError
+			info.AuthError = !session.Connected && isAuthError(session.LastError)
 		}
 		result = append(result, info)
 	}
@@ -154,6 +167,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if session != nil {
 		info.Connected = session.Connected
 		info.LastError = session.LastError
+		info.AuthError = !session.Connected && isAuthError(session.LastError)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

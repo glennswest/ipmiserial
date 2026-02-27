@@ -163,6 +163,10 @@ body {
     background-color: #f9e2af;
 }
 
+.server-status.auth-error {
+    background-color: #fab387;
+}
+
 /* Log list in logs view */
 .log-list {
     max-height: calc(100vh - 180px);
