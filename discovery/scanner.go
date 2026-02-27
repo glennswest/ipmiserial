@@ -263,12 +263,10 @@ func (s *Scanner) watchBMH(ctx context.Context) {
 		case "ADDED", "MODIFIED":
 			changed = s.applyBMH(event.Object)
 		case "DELETED":
-			name := event.Object.Metadata.Name
-			if _, exists := s.servers[name]; exists {
-				delete(s.servers, name)
-				log.Infof("BMH removed: %s", name)
-				changed = true
-			}
+			// Ignore DELETE events — BMH objects represent physical hardware.
+			// Watch DELETE events are often spurious (namespace scoping issues,
+			// object recreation). Rely on fetchBMH list for authoritative state.
+			log.Debugf("BMH watch DELETE ignored for %s", event.Object.Metadata.Name)
 		}
 		s.mu.Unlock()
 
