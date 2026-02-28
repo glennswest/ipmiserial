@@ -255,10 +255,13 @@ function initServerSession(name) {
         }).catch(() => {});
     });
 
-    // Fit after a short delay
-    setTimeout(() => {
-        fit.fit();
-    }, 100);
+    // Only fit if the terminal container is visible — hidden terminals
+    // can't be measured and get wrong column widths causing wrap issues.
+    // selectServer() handles fitting when switching to a hidden terminal.
+    const panel = document.getElementById(`panel-${name}`);
+    if (panel && panel.classList.contains('active')) {
+        setTimeout(() => fit.fit(), 100);
+    }
 
     // Start SSE stream immediately so terminal stays current even when not visible
     startServerStream(name);
