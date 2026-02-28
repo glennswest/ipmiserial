@@ -234,6 +234,9 @@ func (s *Server) handleRotateLogs(w http.ResponseWriter, r *http.Request) {
 	// Record rotation time for power-on delay tracking
 	s.solManager.RecordRotation(name)
 
+	// Clear screen buffer, send clear screen + logchange event to SSE subscribers
+	s.solManager.OnLogRotation(name, newFile)
+
 	// If no session exists yet, start one (triggered by PXE on boot).
 	// Do NOT restart an existing session — the SOL connection is still active
 	// and restarting it drops boot output while reconnecting.

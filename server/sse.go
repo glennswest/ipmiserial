@@ -73,14 +73,19 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Subscribe to raw SOL broadcast
+	// Subscribe to raw SOL broadcast and notification events
 	ch := s.solManager.Subscribe(name)
 	defer s.solManager.Unsubscribe(name, ch)
+	notifyCh := s.solManager.SubscribeNotify(name)
+	defer s.solManager.UnsubscribeNotify(name, notifyCh)
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case event := <-notifyCh:
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data)
+			flusher.Flush()
 		case data, ok := <-ch:
 			if !ok {
 				return

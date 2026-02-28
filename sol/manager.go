@@ -27,6 +27,12 @@ type Session struct {
 	solSession   *sol.Session
 }
 
+// SSEEvent is a named event sent to SSE subscribers (e.g. logchange).
+type SSEEvent struct {
+	Name string
+	Data string
+}
+
 type Manager struct {
 	username       string
 	password       string
@@ -39,6 +45,8 @@ type Manager struct {
 	subscribers    map[string][]chan []byte
 	subMu          sync.RWMutex
 	screenBufs     map[string]*ScreenBuffer
+	notifySubs     map[string][]chan SSEEvent
+	notifyMu       sync.RWMutex
 }
 
 type LogWriter interface {
@@ -58,6 +66,7 @@ func NewManager(username, password string, logWriter LogWriter, rebootDetector *
 		analytics:      NewAnalytics(dataPath),
 		subscribers:    make(map[string][]chan []byte),
 		screenBufs:     make(map[string]*ScreenBuffer),
+		notifySubs:     make(map[string][]chan SSEEvent),
 	}
 	go m.healthCheck()
 	return m
@@ -214,6 +223,53 @@ func (m *Manager) GetScreenBuffer(serverName string) []byte {
 		return nil
 	}
 	return sb.Bytes()
+}
+
+func (m *Manager) SubscribeNotify(serverName string) chan SSEEvent {
+	ch := make(chan SSEEvent, 16)
+	m.notifyMu.Lock()
+	m.notifySubs[serverName] = append(m.notifySubs[serverName], ch)
+	m.notifyMu.Unlock()
+	return ch
+}
+
+func (m *Manager) UnsubscribeNotify(serverName string, ch chan SSEEvent) {
+	m.notifyMu.Lock()
+	defer m.notifyMu.Unlock()
+	subs := m.notifySubs[serverName]
+	for i, s := range subs {
+		if s == ch {
+			m.notifySubs[serverName] = append(subs[:i], subs[i+1:]...)
+			close(ch)
+			return
+		}
+	}
+}
+
+func (m *Manager) notify(serverName string, event SSEEvent) {
+	m.notifyMu.RLock()
+	subs := m.notifySubs[serverName]
+	m.notifyMu.RUnlock()
+	for _, ch := range subs {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
+}
+
+// OnLogRotation clears the screen buffer, sends a clear screen to SSE
+// subscribers, and notifies them of the new log file name.
+func (m *Manager) OnLogRotation(serverName, newLogFile string) {
+	// Reset screen buffer so catchup starts fresh
+	if sb := m.screenBufs[serverName]; sb != nil {
+		sb.Reset()
+	}
+	// Clear screen for live SSE viewers
+	m.broadcast(serverName, []byte("\x1b[2J\x1b[H"))
+	// Send logchange event so the terminal shows "--- New session ---"
+	m.notify(serverName, SSEEvent{Name: "logchange", Data: newLogFile})
+	log.Infof("Log rotation notified for %s: %s", serverName, newLogFile)
 }
 
 func (m *Manager) broadcast(serverName string, data []byte) {
