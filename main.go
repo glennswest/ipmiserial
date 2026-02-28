@@ -22,7 +22,7 @@ import (
 // Major (x.0.0): Breaking changes, major rewrites
 // Minor (0.y.0): New features, significant enhancements
 // Patch (0.0.z): Bug fixes, minor improvements
-var Version = "2.1.0"
+var Version = "2.2.0"
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
