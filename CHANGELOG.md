@@ -23,7 +23,10 @@
 ## [Unreleased]
 
 ### 2026-02-28
-- **feat:** Keep SSE streams running for all servers in background — switching back to a server now shows correct live terminal state instead of stale catchup
+- **feat:** Server-side raw screen buffer (64KB per server) — switching servers replays raw SOL bytes for correct terminal state instead of lossy cleaned-log catchup
+- **fix:** Revert to single SSE connection per server — multiple simultaneous SSE connections exhausted browser's per-domain connection limit (6 for HTTP/1.1), blocking all HTTP requests
+- **fix:** Remove "(Duplicated N times)" text from live terminal view
+- **feat:** Auto-tail log viewer — refreshes content every 3s when viewing end of active log file
 
 ### 2026-02-23
 - **feat:** Power-on delay tracking: measures time from log rotation to first console output, displayed in analytics HTML and JSON API

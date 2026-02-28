@@ -42,39 +42,40 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: %s\n\n", name)
 	flusher.Flush()
 
-	// Skip catchup and clear screen on reconnect (terminal already has content).
-	// Only send catchup on initial connection (?catchup=0 means skip).
-	if r.URL.Query().Get("catchup") != "0" {
-		// Send catchup from log file (last ~4KB of cleaned text)
-		if _, curPath, err := s.logWriter.GetCurrentLogTarget(name); err == nil && curPath != "" {
-			if f, err := os.Open(curPath); err == nil {
-				if info, _ := f.Stat(); info != nil {
-					size := info.Size()
-					const catchupSize = 4096
-					var offset int64
-					if size > catchupSize {
-						f.Seek(size-catchupSize, io.SeekStart)
-						offset = size - catchupSize
-					}
-					buf := make([]byte, size-offset)
-					n, _ := f.Read(buf)
-					if n > 0 {
-						encoded := base64.StdEncoding.EncodeToString(buf[:n])
-						fmt.Fprintf(w, "data: %s\n\n", encoded)
-						flusher.Flush()
-					}
+	// Catchup: prefer raw screen buffer (preserves ANSI/cursor positioning
+	// for correct terminal state). Fall back to cleaned log for servers
+	// without an active SOL session.
+	screenBuf := s.solManager.GetScreenBuffer(name)
+	if len(screenBuf) > 0 {
+		clearAndBuf := append([]byte("\x1b[2J\x1b[H"), screenBuf...)
+		encoded := base64.StdEncoding.EncodeToString(clearAndBuf)
+		fmt.Fprintf(w, "data: %s\n\n", encoded)
+		flusher.Flush()
+	} else if _, curPath, err := s.logWriter.GetCurrentLogTarget(name); err == nil && curPath != "" {
+		if f, err := os.Open(curPath); err == nil {
+			if info, _ := f.Stat(); info != nil {
+				size := info.Size()
+				const catchupSize = 4096
+				var offset int64
+				if size > catchupSize {
+					f.Seek(size-catchupSize, io.SeekStart)
+					offset = size - catchupSize
 				}
-				f.Close()
+				buf := make([]byte, size-offset)
+				n, _ := f.Read(buf)
+				if n > 0 {
+					encoded := base64.StdEncoding.EncodeToString(buf[:n])
+					fmt.Fprintf(w, "data: %s\n\n", encoded)
+					flusher.Flush()
+				}
 			}
+			f.Close()
 		}
-
 	}
 
 	// Subscribe to raw SOL broadcast
 	ch := s.solManager.Subscribe(name)
 	defer s.solManager.Unsubscribe(name, ch)
-
-	lastDupCount := 0
 
 	for {
 		select {
@@ -91,19 +92,6 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 			encoded := base64.StdEncoding.EncodeToString(data)
 			fmt.Fprintf(w, "data: %s\n\n", encoded)
-
-			// Send dedup count if it changed
-			dupCount := s.logWriter.GetDupCount(name)
-			if dupCount != lastDupCount {
-				if dupCount > 0 {
-					fmt.Fprintf(w, "event: dedup\ndata: %d\n\n", dupCount)
-				} else if lastDupCount > 0 {
-					// Dedup ended
-					fmt.Fprintf(w, "event: dedup\ndata: 0\n\n")
-				}
-				lastDupCount = dupCount
-			}
-
 			flusher.Flush()
 		}
 	}

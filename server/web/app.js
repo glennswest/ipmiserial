@@ -263,9 +263,6 @@ function initServerSession(name) {
         setTimeout(() => fit.fit(), 100);
     }
 
-    // Start SSE stream immediately so terminal stays current even when not visible
-    startServerStream(name);
-
     // Start checking for new log files
     checkForNewLogs(name);
 }
@@ -274,15 +271,12 @@ function startServerStream(name) {
     const session = serverSessions[name];
     if (!session) return;
 
-    const isReconnect = session.eventSource !== null;
     if (session.eventSource) {
         session.eventSource.close();
     }
 
-    // Skip catchup on reconnect — terminal already has screen content
-    const url = isReconnect
-        ? `/api/servers/${encodeURIComponent(name)}/stream?catchup=0`
-        : `/api/servers/${encodeURIComponent(name)}/stream`;
+    // Always get catchup — server sends raw screen buffer for correct terminal state
+    const url = `/api/servers/${encodeURIComponent(name)}/stream`;
     const eventSource = new EventSource(url);
 
     eventSource.addEventListener('connected', (event) => {
@@ -294,17 +288,6 @@ function startServerStream(name) {
         session.terminal.write(`\r\n\x1b[36m--- New session: ${logName} ---\x1b[0m\r\n`);
     });
 
-    eventSource.addEventListener('dedup', (event) => {
-        const count = parseInt(event.data, 10);
-        if (count > 0) {
-            // Overwrite current line with dup count using carriage return
-            session.terminal.write(`\r\x1b[2K\x1b[33m(Duplicated ${count} times)\x1b[0m`);
-        } else {
-            // Dedup ended, clear the line
-            session.terminal.write(`\r\x1b[2K`);
-        }
-    });
-
     eventSource.onmessage = (event) => {
         const decoded = atob(event.data);
         session.terminal.write(decoded);
@@ -312,7 +295,7 @@ function startServerStream(name) {
 
     eventSource.onerror = (error) => {
         console.error('SSE error for', name, ':', error);
-        if (eventSource.readyState === EventSource.CLOSED) {
+        if (eventSource.readyState === EventSource.CLOSED && currentServer === name) {
             setTimeout(() => startServerStream(name), 3000);
         }
     };
@@ -355,6 +338,11 @@ async function checkForNewLogs(serverName) {
 }
 
 function selectServer(name) {
+    // Stop SSE stream on the previously selected server
+    if (currentServer && currentServer !== name) {
+        stopServerStream(currentServer);
+    }
+
     // Stop log polling from previous server
     if (logPollInterval) {
         clearInterval(logPollInterval);
@@ -375,7 +363,10 @@ function selectServer(name) {
     });
     document.getElementById(`panel-${name}`).classList.add('show', 'active');
 
-    // Refit the terminal (may need resize after being hidden)
+    // Start SSE stream with screen buffer catchup for correct terminal state
+    startServerStream(name);
+
+    // Refit the terminal
     const session = serverSessions[name];
     if (session && session.fitAddon) {
         setTimeout(() => session.fitAddon.fit(), 50);
@@ -414,11 +405,20 @@ function showSubTab(serverName, tab) {
     } else if (tab === 'logs') {
         subtabs[1].classList.add('active');
         logsPanel.style.display = 'block';
-        // Load log list immediately, then poll every 5s
+        // Load log list immediately, then poll every 3s (also auto-tails log content)
         htmx.trigger(document.body, `refreshLogList-${serverName}`);
         logPollInterval = setInterval(() => {
             htmx.trigger(document.body, `refreshLogList-${serverName}`);
-        }, 5000);
+            // Auto-tail: refresh content if viewing at end of file
+            const state = logState[serverName];
+            if (state && state.filename) {
+                const slider = document.getElementById(`log-slider-${serverName}`);
+                // slider value 0 = bottom = end of file (inverted)
+                if (slider && parseInt(slider.value) <= 5) {
+                    loadLogContent(serverName, state.filename, 100);
+                }
+            }
+        }, 3000);
     } else if (tab === 'analytics') {
         subtabs[2].classList.add('active');
         analyticsPanel.style.display = 'block';
@@ -651,13 +651,12 @@ async function fetchVersion() {
 
 // Reconnect SSE when returning to tab (browser may drop connection in background)
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-        Object.entries(serverSessions).forEach(([name, session]) => {
-            if (session && (!session.eventSource || session.eventSource.readyState === EventSource.CLOSED)) {
-                console.log('Tab visible, reconnecting SSE for', name);
-                startServerStream(name);
-            }
-        });
+    if (!document.hidden && currentServer) {
+        const session = serverSessions[currentServer];
+        if (session && (!session.eventSource || session.eventSource.readyState === EventSource.CLOSED)) {
+            console.log('Tab visible, reconnecting SSE for', currentServer);
+            startServerStream(currentServer);
+        }
     }
 });
 

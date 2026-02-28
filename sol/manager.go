@@ -38,6 +38,7 @@ type Manager struct {
 	analytics      *Analytics
 	subscribers    map[string][]chan []byte
 	subMu          sync.RWMutex
+	screenBufs     map[string]*ScreenBuffer
 }
 
 type LogWriter interface {
@@ -56,6 +57,7 @@ func NewManager(username, password string, logWriter LogWriter, rebootDetector *
 		rebootDetector: rebootDetector,
 		analytics:      NewAnalytics(dataPath),
 		subscribers:    make(map[string][]chan []byte),
+		screenBufs:     make(map[string]*ScreenBuffer),
 	}
 	go m.healthCheck()
 	return m
@@ -193,6 +195,25 @@ func (m *Manager) Unsubscribe(serverName string, ch chan []byte) {
 			return
 		}
 	}
+}
+
+func (m *Manager) getOrCreateScreenBuf(name string) *ScreenBuffer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.screenBufs[name] == nil {
+		m.screenBufs[name] = NewScreenBuffer(defaultScreenBufSize)
+	}
+	return m.screenBufs[name]
+}
+
+func (m *Manager) GetScreenBuffer(serverName string) []byte {
+	m.mu.RLock()
+	sb := m.screenBufs[serverName]
+	m.mu.RUnlock()
+	if sb == nil {
+		return nil
+	}
+	return sb.Bytes()
 }
 
 func (m *Manager) broadcast(serverName string, data []byte) {
@@ -377,6 +398,10 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 	// Clear screen for all SSE subscribers so xterm.js starts fresh
 	m.broadcast(session.ServerName, []byte("\x1b[2J\x1b[H"))
 
+	// Reset screen buffer for new connection
+	sb := m.getOrCreateScreenBuf(session.ServerName)
+	sb.Reset()
+
 	// Read data from SOL and distribute
 	readCh := solSession.Read()
 	errCh := solSession.Err()
@@ -405,6 +430,9 @@ func (m *Manager) connectSOL(ctx context.Context, session *Session) error {
 
 			// Broadcast raw data to SSE subscribers
 			m.broadcast(session.ServerName, data)
+
+			// Write to screen buffer for catchup on server switch
+			sb.Write(data)
 
 			// Write to log file (cleaned)
 			if m.logWriter != nil {
