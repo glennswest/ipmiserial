@@ -260,6 +260,9 @@ function initServerSession(name) {
         fit.fit();
     }, 100);
 
+    // Start SSE stream immediately so terminal stays current even when not visible
+    startServerStream(name);
+
     // Start checking for new log files
     checkForNewLogs(name);
 }
@@ -306,7 +309,7 @@ function startServerStream(name) {
 
     eventSource.onerror = (error) => {
         console.error('SSE error for', name, ':', error);
-        if (eventSource.readyState === EventSource.CLOSED && currentServer === name) {
+        if (eventSource.readyState === EventSource.CLOSED) {
             setTimeout(() => startServerStream(name), 3000);
         }
     };
@@ -349,11 +352,6 @@ async function checkForNewLogs(serverName) {
 }
 
 function selectServer(name) {
-    // Stop SSE stream on the previously selected server
-    if (currentServer && currentServer !== name) {
-        stopServerStream(currentServer);
-    }
-
     // Stop log polling from previous server
     if (logPollInterval) {
         clearInterval(logPollInterval);
@@ -374,10 +372,7 @@ function selectServer(name) {
     });
     document.getElementById(`panel-${name}`).classList.add('show', 'active');
 
-    // Start SSE stream for the newly selected server
-    startServerStream(name);
-
-    // Refit the terminal
+    // Refit the terminal (may need resize after being hidden)
     const session = serverSessions[name];
     if (session && session.fitAddon) {
         setTimeout(() => session.fitAddon.fit(), 50);
@@ -653,12 +648,13 @@ async function fetchVersion() {
 
 // Reconnect SSE when returning to tab (browser may drop connection in background)
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && currentServer) {
-        const session = serverSessions[currentServer];
-        if (session && (!session.eventSource || session.eventSource.readyState === EventSource.CLOSED)) {
-            console.log('Tab visible, reconnecting SSE for', currentServer);
-            startServerStream(currentServer);
-        }
+    if (!document.hidden) {
+        Object.entries(serverSessions).forEach(([name, session]) => {
+            if (session && (!session.eventSource || session.eventSource.readyState === EventSource.CLOSED)) {
+                console.log('Tab visible, reconnecting SSE for', name);
+                startServerStream(name);
+            }
+        });
     }
 });
 

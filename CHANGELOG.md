@@ -22,6 +22,9 @@
 
 ## [Unreleased]
 
+### 2026-02-28
+- **feat:** Keep SSE streams running for all servers in background — switching back to a server now shows correct live terminal state instead of stale catchup
+
 ### 2026-02-23
 - **feat:** Power-on delay tracking: measures time from log rotation to first console output, displayed in analytics HTML and JSON API
 - **fix:** Update go-sol vendor — deactivate stale SOL instance 0x01 before activation (fixes server30 0x80 completion code)
