@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -79,10 +80,19 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	notifyCh := s.solManager.SubscribeNotify(name)
 	defer s.solManager.UnsubscribeNotify(name, notifyCh)
 
+	// Heartbeat keeps the SSE connection alive when no SOL data is flowing
+	// (e.g. server sitting at login prompt). SSE comments (: prefix) are
+	// ignored by EventSource but prevent proxies/browsers from timing out.
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
 		case event := <-notifyCh:
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data)
 			flusher.Flush()
