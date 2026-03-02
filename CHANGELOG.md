@@ -28,6 +28,12 @@
 - **fix:** Remove "(Duplicated N times)" text from live terminal view
 - **feat:** Auto-tail log viewer — refreshes content every 3s when viewing end of active log file
 
+### 2026-03-01
+- **fix:** Log rotation no longer clears screen or resets screen buffer — was wiping boot data already displayed in terminal; BIOS handles its own screen clearing via cursor positioning
+- **fix:** Window resize only fits visible terminal — hidden terminals got wrong column widths causing text wrapping issues
+- **feat:** SSE `logchange` event notification on log rotation (log viewer auto-detects new files)
+- **feat:** SSE heartbeat keepalive (30s) prevents proxy/browser idle disconnect
+
 ### 2026-02-23
 - **feat:** Power-on delay tracking: measures time from log rotation to first console output, displayed in analytics HTML and JSON API
 - **fix:** Update go-sol vendor — deactivate stale SOL instance 0x01 before activation (fixes server30 0x80 completion code)

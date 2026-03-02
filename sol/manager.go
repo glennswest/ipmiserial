@@ -258,16 +258,11 @@ func (m *Manager) notify(serverName string, event SSEEvent) {
 	}
 }
 
-// OnLogRotation clears the screen buffer, sends a clear screen to SSE
-// subscribers, and notifies them of the new log file name.
+// OnLogRotation notifies SSE subscribers of the new log file name.
+// Does NOT clear screen or reset screen buffer — the terminal should
+// continue showing actual SOL output. The BIOS handles its own screen
+// clearing via cursor positioning when it starts a new boot.
 func (m *Manager) OnLogRotation(serverName, newLogFile string) {
-	// Reset screen buffer so catchup starts fresh
-	if sb := m.screenBufs[serverName]; sb != nil {
-		sb.Reset()
-	}
-	// Clear screen for live SSE viewers
-	m.broadcast(serverName, []byte("\x1b[2J\x1b[H"))
-	// Send logchange event so the terminal shows "--- New session ---"
 	m.notify(serverName, SSEEvent{Name: "logchange", Data: newLogFile})
 	log.Infof("Log rotation notified for %s: %s", serverName, newLogFile)
 }

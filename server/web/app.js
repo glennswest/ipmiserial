@@ -608,11 +608,13 @@ function showCopyFeedback(btn) {
     setTimeout(() => btn.textContent = originalText, 1000);
 }
 
-// Handle window resize
+// Handle window resize — only fit the visible terminal to avoid
+// hidden terminals getting wrong column widths (causes wrapping issues).
 window.addEventListener('resize', () => {
-    Object.values(serverSessions).forEach(session => {
-        if (session.fitAddon) session.fitAddon.fit();
-    });
+    if (currentServer) {
+        const session = serverSessions[currentServer];
+        if (session && session.fitAddon) session.fitAddon.fit();
+    }
 });
 
 // Listen for hash changes
