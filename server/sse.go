@@ -14,6 +14,17 @@ import (
 
 var clearScreenSeq = []byte("\x1b[2J")
 
+// sseWrite writes an SSE frame and flushes. Returns false if the connection is dead.
+func sseWrite(w http.ResponseWriter, rc *http.ResponseController, format string, args ...interface{}) bool {
+	if _, err := fmt.Fprintf(w, format, args...); err != nil {
+		return false
+	}
+	if err := rc.Flush(); err != nil {
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
@@ -34,14 +45,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+	rc := http.NewResponseController(w)
+
+	if !sseWrite(w, rc, "event: connected\ndata: %s\n\n", name) {
 		return
 	}
-
-	fmt.Fprintf(w, "event: connected\ndata: %s\n\n", name)
-	flusher.Flush()
 
 	// Catchup: prefer raw screen buffer (preserves ANSI/cursor positioning
 	// for correct terminal state). Fall back to cleaned log for servers
@@ -50,8 +58,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if len(screenBuf) > 0 {
 		clearAndBuf := append([]byte("\x1b[2J\x1b[H"), screenBuf...)
 		encoded := base64.StdEncoding.EncodeToString(clearAndBuf)
-		fmt.Fprintf(w, "data: %s\n\n", encoded)
-		flusher.Flush()
+		if !sseWrite(w, rc, "data: %s\n\n", encoded) {
+			return
+		}
 	} else if _, curPath, err := s.logWriter.GetCurrentLogTarget(name); err == nil && curPath != "" {
 		if f, err := os.Open(curPath); err == nil {
 			if info, _ := f.Stat(); info != nil {
@@ -66,8 +75,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				n, _ := f.Read(buf)
 				if n > 0 {
 					encoded := base64.StdEncoding.EncodeToString(buf[:n])
-					fmt.Fprintf(w, "data: %s\n\n", encoded)
-					flusher.Flush()
+					if !sseWrite(w, rc, "data: %s\n\n", encoded) {
+						f.Close()
+						return
+					}
 				}
 			}
 			f.Close()
@@ -81,8 +92,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer s.solManager.UnsubscribeNotify(name, notifyCh)
 
 	// Heartbeat keeps the SSE connection alive when no SOL data is flowing
-	// (e.g. server sitting at login prompt). SSE comments (: prefix) are
-	// ignored by EventSource but prevent proxies/browsers from timing out.
+	// (e.g. server sitting at login prompt). Uses a named event so proxies
+	// see real SSE data frames, not just comments they might ignore.
 	heartbeat := time.NewTicker(30 * time.Second)
 	defer heartbeat.Stop()
 
@@ -91,11 +102,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-heartbeat.C:
-			fmt.Fprintf(w, ": keepalive\n\n")
-			flusher.Flush()
+			if !sseWrite(w, rc, "event: heartbeat\ndata: \n\n") {
+				return
+			}
 		case event := <-notifyCh:
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data)
-			flusher.Flush()
+			if !sseWrite(w, rc, "event: %s\ndata: %s\n\n", event.Name, event.Data) {
+				return
+			}
 		case data, ok := <-ch:
 			if !ok {
 				return
@@ -106,8 +119,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				data = append(clearScreenSeq, data...)
 			}
 			encoded := base64.StdEncoding.EncodeToString(data)
-			fmt.Fprintf(w, "data: %s\n\n", encoded)
-			flusher.Flush()
+			if !sseWrite(w, rc, "data: %s\n\n", encoded) {
+				return
+			}
 		}
 	}
 }

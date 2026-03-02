@@ -229,6 +229,8 @@ body {
     background-color: transparent;
     white-space: pre-wrap;
     word-wrap: break-word;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 /* Range slider styling */

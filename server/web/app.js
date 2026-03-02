@@ -295,8 +295,22 @@ function startServerStream(name) {
 
     eventSource.onerror = (error) => {
         console.error('SSE error for', name, ':', error);
-        if (eventSource.readyState === EventSource.CLOSED && currentServer === name) {
-            setTimeout(() => startServerStream(name), 3000);
+        if (currentServer === name) {
+            if (eventSource.readyState === EventSource.CLOSED) {
+                // Browser gave up auto-reconnecting — do it ourselves
+                setTimeout(() => startServerStream(name), 3000);
+            } else if (eventSource.readyState === EventSource.CONNECTING) {
+                // Browser is trying to auto-reconnect but it may be stuck.
+                // Give it 10s, then force a fresh connection.
+                setTimeout(() => {
+                    if (session.eventSource === eventSource &&
+                        eventSource.readyState === EventSource.CONNECTING) {
+                        console.log('SSE stuck reconnecting, forcing fresh connection for', name);
+                        eventSource.close();
+                        startServerStream(name);
+                    }
+                }, 10000);
+            }
         }
     };
 
@@ -410,6 +424,8 @@ function showSubTab(serverName, tab) {
         logPollInterval = setInterval(() => {
             htmx.trigger(document.body, `refreshLogList-${serverName}`);
             // Auto-tail: refresh content if viewing at end of file
+            // Skip refresh when user has text selected (prevents clearing their selection)
+            if (window.getSelection().toString().length > 0) return;
             const state = logState[serverName];
             if (state && state.filename) {
                 const slider = document.getElementById(`log-slider-${serverName}`);

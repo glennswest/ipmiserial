@@ -29,6 +29,11 @@
 - **feat:** Auto-tail log viewer — refreshes content every 3s when viewing end of active log file
 
 ### 2026-03-01
+- **fix:** SSE handler detects dead connections — uses `ResponseController.Flush()` error checking to immediately clean up broken SSE connections instead of silently writing to dead sockets forever
+- **fix:** SSE heartbeat upgraded from comment to named event — proxies that ignore SSE comments no longer drop idle connections
+- **fix:** Log viewer copy-paste broken by auto-tail — 3-second refresh was replacing DOM and clearing text selection; now skips refresh when user has active selection
+- **fix:** Log viewer `user-select: text` CSS restored (was dropped by duplicate rule override)
+- **fix:** SSE client reconnect for stuck CONNECTING state — forces fresh connection after 10s if EventSource auto-reconnect stalls
 - **fix:** Log rotation no longer clears screen or resets screen buffer — was wiping boot data already displayed in terminal; BIOS handles its own screen clearing via cursor positioning
 - **fix:** Window resize only fits visible terminal — hidden terminals got wrong column widths causing text wrapping issues
 - **feat:** SSE `logchange` event notification on log rotation (log viewer auto-detects new files)
