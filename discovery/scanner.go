@@ -243,16 +243,32 @@ func (s *Scanner) fetchBMH() {
 
 	log.Infof("fetchBMH: decoded %d BMH items", len(list.Items))
 
-	hasNew := false
+	// Build set of current BMH names
+	bmhNames := make(map[string]bool, len(list.Items))
+	for _, bmh := range list.Items {
+		if bmh.Spec.BMC.Address != "" {
+			bmhNames[bmh.Metadata.Name] = true
+		}
+	}
+
+	changed := false
 	s.mu.Lock()
 	for _, bmh := range list.Items {
 		if s.applyBMH(bmh) {
-			hasNew = true
+			changed = true
+		}
+	}
+	// Remove servers no longer in BMH list
+	for name := range s.servers {
+		if !bmhNames[name] {
+			log.Infof("Removing stale server: %s (no longer in BMH)", name)
+			delete(s.servers, name)
+			changed = true
 		}
 	}
 	s.mu.Unlock()
 
-	if hasNew {
+	if changed {
 		s.cache.Save(s.GetServers())
 		if s.onChange != nil {
 			go s.onChange(s.GetServers())

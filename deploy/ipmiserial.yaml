@@ -8,6 +8,7 @@ metadata:
   namespace: g11
   annotations:
     vkube.io/network: g11
+    vkube.io/static-ip: "192.168.11.200"
     vkube.io/boot-priority: "70"
     vkube.io/depends-on: "g11_dns_microdns"
     vkube.io/image-policy: auto
